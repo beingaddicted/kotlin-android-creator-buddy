@@ -11,7 +11,7 @@ export class EnhancedReconnectionManager {
   private isAdmin = false;
   private deviceId: string;
   private organizationId: string;
-  private onReconnectionStarted?: (clientIds: string[]) => void;
+  private reconnectionStartedCallback?: (clientIds: string[]) => void;
 
   constructor(deviceId: string, organizationId: string, isAdmin: boolean) {
     this.deviceId = deviceId;
@@ -85,8 +85,8 @@ export class EnhancedReconnectionManager {
     const clientIds = storedState.clients.map(client => client.id);
     
     // Notify that reconnection process started
-    if (this.onReconnectionStarted) {
-      this.onReconnectionStarted(clientIds);
+    if (this.reconnectionStartedCallback) {
+      this.reconnectionStartedCallback(clientIds);
     }
 
     // Send reconnection requests through signaling server
@@ -159,8 +159,8 @@ export class EnhancedReconnectionManager {
     }
   }
 
-  onReconnectionStarted(callback: (clientIds: string[]) => void): void {
-    this.onReconnectionStarted = callback;
+  setOnReconnectionStarted(callback: (clientIds: string[]) => void): void {
+    this.reconnectionStartedCallback = callback;
   }
 
   isSignalingConnected(): boolean {

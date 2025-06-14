@@ -1,23 +1,27 @@
 
 import { WebRTCMessage } from './types';
-import { SignalingMessage, SignalingService } from './SignalingService';
+import { SignalingService } from './SignalingService';
 import { PeerManager } from './PeerManager';
+import { MessageRouter } from './MessageRouter';
+import { SecureMessageSender } from './SecureMessageSender';
 
 export class DataChannelManager {
   private peerManager: PeerManager;
   private signalingService: SignalingService;
+  private messageRouter: MessageRouter;
+  private messageSender: SecureMessageSender;
   private isServer: boolean = false;
-  private onLocationReceived?: (userId: string, location: any) => void;
-  private onSignalingReceived?: (message: SignalingMessage, fromPeerId: string) => void;
-  private onMessageReceived?: (message: WebRTCMessage, fromPeerId: string) => void;
 
   constructor(peerManager: PeerManager, signalingService: SignalingService) {
     this.peerManager = peerManager;
     this.signalingService = signalingService;
+    this.messageRouter = new MessageRouter(peerManager);
+    this.messageSender = new SecureMessageSender(peerManager);
   }
 
   setAsServer(isServer: boolean) {
     this.isServer = isServer;
+    this.messageRouter.setAsServer(isServer);
   }
 
   setupDataChannel(dataChannel: RTCDataChannel, peerId: string) {
@@ -37,27 +41,12 @@ export class DataChannelManager {
       
       // If server, request initial location from client
       if (this.isServer) {
-        this.requestLocationUpdate(peerId);
+        this.messageSender.requestLocationUpdate(peerId);
       }
     };
 
     dataChannel.onmessage = async (event) => {
-      const message = JSON.parse(event.data);
-      
-      // Handle security messages first
-      if (this.isSecurityMessage(message)) {
-        await this.handleSecurityMessage(message, peerId);
-        return;
-      }
-      
-      // Check if it's a signaling message or regular WebRTC message
-      if (this.isSignalingMessage(message)) {
-        // Let SignalingService handle it
-        return;
-      } else {
-        // Handle as regular WebRTC message
-        this.handleDataChannelMessage(message as WebRTCMessage, peerId);
-      }
+      await this.messageRouter.routeMessage(event, peerId);
     };
 
     dataChannel.onclose = () => {
@@ -71,224 +60,34 @@ export class DataChannelManager {
     };
   }
 
-  private isSignalingMessage(data: any): boolean {
-    return data && 
-           typeof data === 'object' &&
-           ['new-offer', 'new-answer', 'ice-candidate', 'ip-changed'].includes(data.type) &&
-           data.fromId &&
-           typeof data.timestamp === 'number';
-  }
-
-  private isSecurityMessage(data: any): boolean {
-    return data && 
-           typeof data === 'object' &&
-           ['auth-challenge', 'auth-response', 'secure-message'].includes(data.type);
-  }
-
-  private async handleSecurityMessage(message: WebRTCMessage, peerId: string): Promise<void> {
-    if (!window.securityManager) {
-      console.warn('DataChannelManager: Security message received but no security manager available');
-      return;
-    }
-
-    switch (message.type) {
-      case 'auth-challenge':
-        await window.securityManager.handleAuthChallenge(message.data);
-        break;
-        
-      case 'auth-response':
-        // This would need the original challenge - simplified for now
-        console.log('DataChannelManager: Auth response received from', peerId);
-        break;
-        
-      case 'secure-message':
-        const decrypted = await window.securityManager.decryptMessage(message);
-        if (decrypted) {
-          // Process the decrypted message
-          this.handleDataChannelMessage({
-            type: decrypted.type as any,
-            data: decrypted.message,
-            timestamp: message.timestamp
-          }, peerId);
-        }
-        break;
-    }
-  }
-
-  private async handleDataChannelMessage(message: WebRTCMessage, peerId: string) {
-    console.log('WebRTC: Received message:', message.type, 'from:', peerId);
-
-    // Check permissions for sensitive operations
-    if (window.securityManager && this.requiresPermission(message.type)) {
-      if (!this.checkMessagePermissions(message, peerId)) {
-        console.warn('DataChannelManager: Insufficient permissions for message type:', message.type);
-        return;
-      }
-    }
-
-    switch (message.type) {
-      case 'location':
-        if (this.onLocationReceived) {
-          this.peerManager.updatePeerLastSeen(peerId);
-          this.onLocationReceived(peerId, message.data);
-        }
-        break;
-        
-      case 'location-request':
-        // Check if requester has permission to request location
-        if (window.securityManager && !window.securityManager.canAccessLocation(peerId)) {
-          console.warn('DataChannelManager: Unauthorized location request from', peerId);
-          return;
-        }
-        
-        // Client received location request from server
-        if (!this.isServer) {
-          this.sendCurrentLocation();
-        }
-        break;
-        
-      case 'mesh-data':
-        // Handle mesh network data
-        this.handleMeshData(message.data, peerId);
-        break;
-        
-      default:
-        if (this.onMessageReceived) {
-          this.onMessageReceived(message, peerId);
-        }
-        break;
-    }
-  }
-
-  private requiresPermission(messageType: string): boolean {
-    return ['location-request', 'mesh-data'].includes(messageType);
-  }
-
-  private checkMessagePermissions(message: WebRTCMessage, peerId: string): boolean {
-    if (!window.securityManager) return true;
-
-    switch (message.type) {
-      case 'location-request':
-        return window.securityManager.canAccessLocation(peerId);
-      case 'mesh-data':
-        return window.securityManager.isDeviceTrusted(peerId);
-      default:
-        return true;
-    }
-  }
-
-  private handleMeshData(meshData: any, peerId: string): void {
-    // Forward mesh data to signaling service for processing
-    console.log('DataChannelManager: Received mesh data from', peerId);
-    
-    // Create a custom event for mesh data
-    const event = new CustomEvent('webrtc-mesh-data-received', {
-      detail: { meshData, fromPeerId: peerId }
-    });
-    window.dispatchEvent(event);
-  }
-
   // Server method to request location from specific client
   requestLocationUpdate(peerId: string) {
     if (!this.isServer) return;
-    
-    const peer = this.peerManager.getPeer(peerId);
-    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
-      const message: WebRTCMessage = {
-        type: 'location-request',
-        data: {},
-        timestamp: Date.now()
-      };
-      peer.dataChannel.send(JSON.stringify(message));
-      console.log('WebRTC: Location request sent to', peerId);
-    }
-  }
-
-  // Client method to send current location when requested
-  private sendCurrentLocation() {
-    // This will be called by LocationService
-    const event = new CustomEvent('webrtc-location-requested');
-    window.dispatchEvent(event);
+    this.messageSender.requestLocationUpdate(peerId);
   }
 
   sendMeshData(peerId: string, meshData: any): void {
-    const peer = this.peerManager.getPeer(peerId);
-    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
-      const message: WebRTCMessage = {
-        type: 'mesh-data',
-        data: meshData,
-        timestamp: Date.now()
-      };
-      
-      try {
-        peer.dataChannel.send(JSON.stringify(message));
-        console.log('DataChannelManager: Sent mesh data to', peerId);
-      } catch (error) {
-        console.error('DataChannelManager: Failed to send mesh data:', error);
-      }
-    }
+    this.messageSender.sendMeshData(peerId, meshData);
   }
 
   public send(peerId: string, data: { type: string; data: any }): void {
-    const peer = this.peerManager.getPeer(peerId);
-    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
-      const message: WebRTCMessage = {
-        type: data.type as WebRTCMessage['type'],
-        data: data.data,
-        timestamp: Date.now(),
-      };
-      try {
-        peer.dataChannel.send(JSON.stringify(message));
-      } catch (error) {
-        console.error(`Failed to send message to ${peerId}:`, error);
-      }
-    }
+    this.messageSender.sendMessage(peerId, data.data, data.type);
   }
 
   async sendSecureMessage(peerId: string, message: any, messageType: string): Promise<void> {
-    if (!window.securityManager) {
-      // Fallback to unencrypted
-      this.sendMessage(peerId, message, messageType);
-      return;
-    }
-
-    const encryptedMessage = await window.securityManager.encryptMessage(message, peerId, messageType);
-    if (encryptedMessage) {
-      this.sendRawMessage(peerId, encryptedMessage);
-    } else {
-      console.warn('DataChannelManager: Failed to encrypt message, sending unencrypted');
-      this.sendMessage(peerId, message, messageType);
-    }
-  }
-
-  private sendMessage(peerId: string, data: any, type: string): void {
-    const peer = this.peerManager.getPeer(peerId);
-    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
-      const message: WebRTCMessage = {
-        type: type as any,
-        data: data,
-        timestamp: Date.now()
-      };
-      peer.dataChannel.send(JSON.stringify(message));
-    }
-  }
-
-  private sendRawMessage(peerId: string, message: WebRTCMessage): void {
-    const peer = this.peerManager.getPeer(peerId);
-    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
-      peer.dataChannel.send(JSON.stringify(message));
-    }
+    await this.messageSender.sendSecureMessage(peerId, message, messageType);
   }
 
   onLocationUpdate(callback: (userId: string, location: any) => void) {
-    this.onLocationReceived = callback;
-  }
-
-  onSignalingMessage(callback: (message: SignalingMessage, fromPeerId: string) => void) {
-    this.onSignalingReceived = callback;
+    this.messageRouter.onLocationUpdate(callback);
   }
 
   onMessage(callback: (message: WebRTCMessage, fromPeerId: string) => void) {
-    this.onMessageReceived = callback;
+    this.messageRouter.onMessage(callback);
+  }
+
+  onSignalingMessage(callback: (message: any, fromPeerId: string) => void) {
+    // This method exists for backward compatibility
+    // Signaling messages are now handled by the SignalingService directly
   }
 }

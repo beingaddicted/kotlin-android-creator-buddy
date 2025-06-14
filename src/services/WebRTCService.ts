@@ -43,7 +43,7 @@ class WebRTCService {
 
     // Setup enhanced reconnection if available
     if (this.core.enhancedReconnectionManager) {
-      this.core.enhancedReconnectionManager.onReconnectionStarted((clientIds) => {
+      this.core.enhancedReconnectionManager.setOnReconnectionStarted((clientIds: string[]) => {
         console.log('WebRTCService: Enhanced reconnection started for clients:', clientIds);
       });
     }
