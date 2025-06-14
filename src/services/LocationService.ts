@@ -34,9 +34,6 @@ class LocationService {
     this.isTracking = true;
     console.log('Starting location tracking for user:', userId);
 
-    // Initialize WebRTC connection
-    await webRTCService.initializeAsClient(userId, organizationId);
-
     // Listen for app state changes
     App.addListener('appStateChange', ({ isActive }) => {
       if (!isActive) {

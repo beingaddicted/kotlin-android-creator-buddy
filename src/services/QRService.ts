@@ -1,5 +1,6 @@
 
 import QRCode from 'qrcode';
+import { WebRTCOffer, WebRTCAnswer } from './WebRTCService';
 
 export interface QRData {
   type: 'organization_invite';
@@ -38,12 +39,58 @@ class QRService {
     }
   }
 
-  parseQRData(qrString: string): QRData | null {
+  async generateWebRTCOfferQR(offerData: WebRTCOffer): Promise<string> {
+    try {
+      const qrCodeDataURL = await QRCode.toDataURL(JSON.stringify(offerData), {
+        width: 400,
+        margin: 2,
+        color: {
+          dark: '#1e40af',
+          light: '#ffffff'
+        },
+        errorCorrectionLevel: 'M'
+      });
+
+      return qrCodeDataURL;
+    } catch (error) {
+      console.error('WebRTC Offer QR generation failed:', error);
+      throw new Error('Failed to generate WebRTC offer QR code');
+    }
+  }
+
+  async generateWebRTCAnswerQR(answerData: WebRTCAnswer): Promise<string> {
+    try {
+      const qrCodeDataURL = await QRCode.toDataURL(JSON.stringify(answerData), {
+        width: 400,
+        margin: 2,
+        color: {
+          dark: '#059669',
+          light: '#ffffff'
+        },
+        errorCorrectionLevel: 'M'
+      });
+
+      return qrCodeDataURL;
+    } catch (error) {
+      console.error('WebRTC Answer QR generation failed:', error);
+      throw new Error('Failed to generate WebRTC answer QR code');
+    }
+  }
+
+  parseQRData(qrString: string): QRData | WebRTCOffer | WebRTCAnswer | null {
     try {
       const data = JSON.parse(qrString);
       
       if (data.type === 'organization_invite' && data.organizationId && data.adminId) {
         return data as QRData;
+      }
+      
+      if (data.type === 'webrtc_offer' && data.offer && data.organizationId) {
+        return data as WebRTCOffer;
+      }
+
+      if (data.type === 'webrtc_answer' && data.answer && data.userId) {
+        return data as WebRTCAnswer;
       }
       
       return null;

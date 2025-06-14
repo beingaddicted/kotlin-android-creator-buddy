@@ -3,8 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MapPin, Users, Clock, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { MapPin, Users, Clock, RefreshCw, Wifi, WifiOff, QrCode } from "lucide-react";
 import { MapView } from "./MapView";
+import { WebRTCQRGenerator } from "./WebRTCQRGenerator";
 import { webRTCService, PeerConnection } from "@/services/WebRTCService";
 
 interface Organization {
@@ -34,40 +35,38 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [webRTCStatus, setWebRTCStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [connectedPeers, setConnectedPeers] = useState<PeerConnection[]>([]);
+  const [showQRGenerator, setShowQRGenerator] = useState(false);
 
   useEffect(() => {
-    if (selectedOrg) {
-      initializeWebRTC();
-    } else {
+    if (selectedOrg && !showQRGenerator) {
+      checkWebRTCStatus();
+    } else if (!selectedOrg) {
       cleanupWebRTC();
     }
-  }, [selectedOrg]);
+  }, [selectedOrg, showQRGenerator]);
 
-  const initializeWebRTC = async () => {
-    try {
-      setWebRTCStatus('connecting');
-      
-      // Initialize WebRTC as admin for the selected organization
-      await webRTCService.initializeAsAdmin(selectedOrg);
-      
-      // Setup location update listener
-      webRTCService.onLocationUpdate((userId, locationData) => {
-        console.log('Received location from user:', userId, locationData);
-        updateMemberLocation(userId, locationData);
-      });
-
-      // Setup peer status listener
-      webRTCService.onPeerStatusUpdate((peers) => {
-        console.log('Peer status updated:', peers);
-        setConnectedPeers(peers);
-        updateMembersFromPeers(peers);
-      });
-
-      setWebRTCStatus('connected');
-    } catch (error) {
-      console.error('Failed to initialize WebRTC:', error);
-      setWebRTCStatus('disconnected');
+  const checkWebRTCStatus = () => {
+    const status = webRTCService.getConnectionStatus();
+    setWebRTCStatus(status);
+    
+    if (status === 'connected') {
+      setupWebRTCListeners();
     }
+  };
+
+  const setupWebRTCListeners = () => {
+    // Setup location update listener
+    webRTCService.onLocationUpdate((userId, locationData) => {
+      console.log('Received location from user:', userId, locationData);
+      updateMemberLocation(userId, locationData);
+    });
+
+    // Setup peer status listener
+    webRTCService.onPeerStatusUpdate((peers) => {
+      console.log('Peer status updated:', peers);
+      setConnectedPeers(peers);
+      updateMembersFromPeers(peers);
+    });
   };
 
   const cleanupWebRTC = () => {
@@ -75,6 +74,13 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
     setWebRTCStatus('disconnected');
     setConnectedPeers([]);
     setMembers([]);
+  };
+
+  const handleConnectionEstablished = (organizationId: string) => {
+    console.log('WebRTC connection established for org:', organizationId);
+    setShowQRGenerator(false);
+    setWebRTCStatus('connected');
+    setupWebRTCListeners();
   };
 
   const updateMemberLocation = (userId: string, locationData: any) => {
@@ -105,18 +111,16 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
       name: peer.name,
       status: peer.status === 'connected' ? 'active' : 'offline',
       lastSeen: peer.status === 'connected' ? 'Connected' : formatTimestamp(peer.lastSeen),
-      latitude: 0, // Will be updated when location data arrives
+      latitude: 0,
       longitude: 0
     }));
 
-    // Merge with existing members that have location data
     setMembers(currentMembers => {
       const merged = [...peerMembers];
       
       currentMembers.forEach(currentMember => {
         const peerIndex = merged.findIndex(p => p.id === currentMember.id);
         if (peerIndex >= 0) {
-          // Keep location data from current member
           merged[peerIndex] = {
             ...merged[peerIndex],
             latitude: currentMember.latitude,
@@ -132,7 +136,6 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
   const refreshConnections = async () => {
     setIsRefreshing(true);
     
-    // Refresh WebRTC connections
     setTimeout(() => {
       console.log('Refreshing WebRTC connections...');
       const currentPeers = webRTCService.getConnectedPeers();
@@ -155,6 +158,15 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
     setSelectedMember(memberId);
   };
 
+  if (showQRGenerator) {
+    return (
+      <WebRTCQRGenerator 
+        organizations={organizations}
+        onConnectionEstablished={handleConnectionEstablished}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -176,14 +188,22 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
             </div>
           </div>
         </div>
-        <Button 
-          onClick={refreshConnections} 
-          disabled={!selectedOrg || isRefreshing || webRTCStatus !== 'connected'}
-          variant="outline"
-        >
-          <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex space-x-2">
+          {selectedOrg && webRTCStatus === 'disconnected' && (
+            <Button onClick={() => setShowQRGenerator(true)}>
+              <QrCode className="w-4 h-4 mr-2" />
+              Setup Connection
+            </Button>
+          )}
+          <Button 
+            onClick={refreshConnections} 
+            disabled={!selectedOrg || isRefreshing || webRTCStatus !== 'connected'}
+            variant="outline"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -224,7 +244,21 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
         </div>
       </div>
 
-      {selectedOrg && (
+      {selectedOrg && webRTCStatus === 'disconnected' && (
+        <Card>
+          <CardContent className="text-center py-12">
+            <QrCode className="w-12 h-12 text-blue-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Setup P2P Connection</h3>
+            <p className="text-gray-500 mb-4">Generate connection QR codes to establish direct peer-to-peer communication with members.</p>
+            <Button onClick={() => setShowQRGenerator(true)}>
+              <QrCode className="w-4 h-4 mr-2" />
+              Generate Connection QR
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {selectedOrg && webRTCStatus === 'connected' && (
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Map Area */}
           <div className="lg:col-span-2">
@@ -302,14 +336,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
                   <div className="text-center py-8">
                     <Users className="w-12 h-12 text-gray-400 mx-auto mb-2" />
                     <p className="text-gray-500">Waiting for members to connect...</p>
-                    <p className="text-xs text-gray-400 mt-1">Members need to scan QR and start tracking</p>
-                  </div>
-                )}
-
-                {webRTCStatus !== 'connected' && (
-                  <div className="text-center py-8">
-                    <WifiOff className="w-12 h-12 text-red-400 mx-auto mb-2" />
-                    <p className="text-gray-500">WebRTC connection {webRTCStatus}</p>
+                    <p className="text-xs text-gray-400 mt-1">Members need to scan connection QR and start tracking</p>
                   </div>
                 )}
               </CardContent>
