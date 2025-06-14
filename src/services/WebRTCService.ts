@@ -3,12 +3,17 @@ import { SignalingMessage } from './webrtc/SignalingService';
 import { WebRTCServiceCore } from './webrtc/WebRTCServiceCore';
 // Removed: import { WebRTCMeshService } from './webrtc/WebRTCMeshService';
 import { WebRTCManagerCollection } from './webrtc/WebRTCManagerCollection';
+import { ExponentialBackoff } from '@/utils/backoff';
 
 class WebRTCService {
   private core: WebRTCServiceCore;
   // Removed: private meshService: WebRTCMeshService;
   private managers: WebRTCManagerCollection;
   private longPollInterval: NodeJS.Timeout | null = null;
+
+  // For improved reconnect logic:
+  private backoff: ExponentialBackoff | null = null;
+  private isListeningForAdminOnline = false;
 
   constructor() {
     this.core = new WebRTCServiceCore();
@@ -17,9 +22,53 @@ class WebRTCService {
 
     this.managers.setupEventManagerCallbacks(this.core);
 
+    // Listen for admin online broadcasts (if not admin)
+    this.registerAdminOnlineListener();
+
     // Add event listeners for robust client-side reconnection
     window.addEventListener('webrtc-client-reconnection-needed', this.forceReconnect.bind(this));
     window.addEventListener('webrtc-connection-lost', this.handlePermanentConnectionLoss.bind(this) as EventListener);
+  }
+
+  // Broadcast presence when admin becomes available
+  private broadcastAdminOnline() {
+    if (!this.core.isAdmin) return;
+    try {
+      const channel = new BroadcastChannel('webrtc-admin');
+      channel.postMessage({
+        type: 'admin-online',
+        ts: Date.now(),
+        orgId: this.core.organizationId,
+      });
+      channel.close();
+    } catch (e) {
+      console.warn('Admin online broadcast failed:', e);
+    }
+  }
+
+  private registerAdminOnlineListener() {
+    // Ensure we only install this listener once per client
+    if (this.isListeningForAdminOnline) return;
+    try {
+      const channel = new BroadcastChannel('webrtc-admin');
+      channel.onmessage = (event) => {
+        if (
+          event.data &&
+          event.data.type === 'admin-online' &&
+          event.data.orgId === this.core.organizationId &&
+          !this.core.isAdmin
+        ) {
+          // Instantly trigger reconnection attempt
+          console.log('Admin comeback detected. Attempting fast reconnect.');
+          this.stopLongPollReconnect();
+          this.forceReconnect();
+        }
+      };
+      // No need to close here; stays open as long as needed for listener.
+      this.isListeningForAdminOnline = true;
+    } catch (e) {
+      console.warn('Could not listen for admin online events:', e);
+    }
   }
 
   async createServerOffer(organizationId: string, organizationName: string): Promise<WebRTCServerOffer> {
@@ -37,6 +86,9 @@ class WebRTCService {
 
     this.setupConnectionHandlers();
     this.managers.eventManager.setupIPChangeHandling();
+
+    // Broadcast admin presence so clients reconnect
+    this.broadcastAdminOnline();
 
     return serverOffer;
   }
@@ -186,7 +238,7 @@ class WebRTCService {
 
   private handlePermanentConnectionLoss(event: CustomEvent): void {
     if (!this.core.isAdmin) {
-        console.log('Client connection permanently lost, starting long-poll reconnect strategy.');
+        console.log('Client connection permanently lost, starting dynamic backoff reconnect strategy.');
         this.startLongPollReconnect();
     }
   }
@@ -194,22 +246,31 @@ class WebRTCService {
   private startLongPollReconnect(): void {
     this.stopLongPollReconnect(); // Ensure no multiple intervals are running
 
-    this.longPollInterval = setInterval(() => {
-        if (this.getConnectionStatus() !== 'connected') {
-            console.log('Long-poll: attempting to reconnect...');
-            this.forceReconnect();
-        } else {
-            console.log('Long-poll: reconnected successfully.');
-            this.stopLongPollReconnect();
-        }
-    }, 30000); // Try to reconnect every 30 seconds
-  }
-  
-  private stopLongPollReconnect(): void {
-      if (this.longPollInterval) {
-          clearInterval(this.longPollInterval);
-          this.longPollInterval = null;
+    if (!this.backoff) {
+      this.backoff = new ExponentialBackoff(2000, 30000, 2); // Start at 2s, max 30s
+    }
+    const doReconnect = async () => {
+      if (this.getConnectionStatus() !== 'connected') {
+        console.log(`Reconnection attempt (interval: ${this.backoff!.currentInterval} ms)...`);
+        await this.forceReconnect();
+        this.longPollInterval = setTimeout(doReconnect, this.backoff!.getNextInterval());
+      } else {
+        // On success
+        this.backoff!.reset();
+        this.stopLongPollReconnect();
       }
+    };
+    this.longPollInterval = setTimeout(doReconnect, this.backoff.getNextInterval());
+  }
+
+  private stopLongPollReconnect(): void {
+    if (this.longPollInterval) {
+      clearTimeout(this.longPollInterval as any); // Use clearTimeout for setTimeout, not clearInterval
+      this.longPollInterval = null;
+    }
+    if (this.backoff) {
+      this.backoff.reset();
+    }
   }
 
   // Removed: Mesh network API (getMeshNetworkStatus, getAllDevicesInNetwork, onMeshNetworkUpdate, etc.)
@@ -227,6 +288,9 @@ class WebRTCService {
   disconnect(): void {
     this.core.cleanup();
     this.stopLongPollReconnect();
+    // Clean up broadcast channels
+    this.isListeningForAdminOnline = false;
+    // There might be more event listeners to clean up in a larger refactoring
     window.removeEventListener('webrtc-client-reconnection-needed', this.forceReconnect.bind(this));
     window.removeEventListener('webrtc-connection-lost', this.handlePermanentConnectionLoss.bind(this) as EventListener);
     // Removed: this.meshService.cleanup();
