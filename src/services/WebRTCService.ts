@@ -116,7 +116,17 @@ class WebRTCService {
     }
   }
 
-  // Public API methods
+  approveJoinRequest(peerId: string, approved: boolean): void {
+    if (!this.core.isAdmin) return;
+
+    const message = {
+      type: 'join-response',
+      data: { approved }
+    };
+
+    this.sendToPeer(peerId, message);
+  }
+
   requestLocationFromClient(clientId: string): void {
     if (!this.core.isAdmin) return;
     this.managers.serverManager.requestLocationFromClient(clientId);
@@ -132,7 +142,7 @@ class WebRTCService {
       console.warn('Only admin can send data to a specific peer.');
       return;
     }
-    this.managers.serverManager.connectionManager.sendToPeer(peerId, data);
+    this.managers.serverManager.sendToPeer(peerId, data);
   }
 
   sendLocationUpdate(locationData: any): void {
@@ -146,6 +156,12 @@ class WebRTCService {
 
   onPeerStatusUpdate(callback: (peers: PeerConnection[]) => void): void {
     this.core.connectionManager.onPeerStatusUpdate(callback);
+  }
+
+  onMessage(callback: (message: WebRTCMessage) => void): void {
+    this.core.connectionManager.onMessage((message, fromPeerId) => {
+      callback(message);
+    });
   }
 
   getConnectedPeers(): PeerConnection[] {

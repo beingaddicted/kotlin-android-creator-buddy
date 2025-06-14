@@ -8,6 +8,7 @@ export class DataChannelManager {
   private isServer: boolean = false;
   private onLocationReceived?: (userId: string, location: any) => void;
   private onSignalingReceived?: (message: SignalingMessage, fromPeerId: string) => void;
+  private onMessageReceived?: (message: WebRTCMessage, fromPeerId: string) => void;
 
   constructor(peerManager: PeerManager, signalingService: SignalingService) {
     this.peerManager = peerManager;
@@ -149,6 +150,12 @@ export class DataChannelManager {
         // Handle mesh network data
         this.handleMeshData(message.data, peerId);
         break;
+        
+      default:
+        if (this.onMessageReceived) {
+          this.onMessageReceived(message, peerId);
+        }
+        break;
     }
   }
 
@@ -221,6 +228,21 @@ export class DataChannelManager {
     }
   }
 
+  public send(peerId: string, data: { type: string; data: any }): void {
+    const peer = this.peerManager.getPeer(peerId);
+    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
+      const message: WebRTCMessage = {
+        ...data,
+        timestamp: Date.now(),
+      };
+      try {
+        peer.dataChannel.send(JSON.stringify(message));
+      } catch (error) {
+        console.error(`Failed to send message to ${peerId}:`, error);
+      }
+    }
+  }
+
   async sendSecureMessage(peerId: string, message: any, messageType: string): Promise<void> {
     if (!window.securityManager) {
       // Fallback to unencrypted
@@ -262,5 +284,9 @@ export class DataChannelManager {
 
   onSignalingMessage(callback: (message: SignalingMessage, fromPeerId: string) => void) {
     this.onSignalingReceived = callback;
+  }
+
+  onMessage(callback: (message: WebRTCMessage, fromPeerId: string) => void) {
+    this.onMessageReceived = callback;
   }
 }

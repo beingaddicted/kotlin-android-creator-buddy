@@ -1,9 +1,9 @@
-
 import { PeerConnection } from './types';
 import { SignalingService, SignalingMessage } from './SignalingService';
 import { PeerManager } from './PeerManager';
 import { DataChannelManager } from './DataChannelManager';
 import { LocationManager } from './LocationManager';
+import { WebRTCMessage } from './types';
 
 export class ConnectionManager {
   private peerManager: PeerManager;
@@ -81,6 +81,10 @@ export class ConnectionManager {
     this.signalingService.notifyIpChange(newIp);
   }
 
+  sendToPeer(peerId: string, data: { type: string, data: any }): void {
+    this.dataChannelManager.send(peerId, data);
+  }
+
   onSignalingMessage(callback: (message: SignalingMessage, fromPeerId: string) => void) {
     this.dataChannelManager.onSignalingMessage(callback);
   }
@@ -96,5 +100,9 @@ export class ConnectionManager {
 
   onPeerStatusUpdate(callback: (peers: PeerConnection[]) => void) {
     this.peerManager.onPeerStatusUpdate(callback);
+  }
+
+  onMessage(callback: (message: WebRTCMessage, fromPeerId: string) => void) {
+    this.dataChannelManager.onMessage(callback);
   }
 }

@@ -1,3 +1,4 @@
+
 import { WebRTCServerOffer } from './types';
 import { WebRTCConnection } from './WebRTCConnection';
 import { ConnectionManager } from './ConnectionManager';
@@ -101,6 +102,10 @@ export class WebRTCServerManager {
   getStoredClientCount(): number {
     const state = this.autoReconnectionManager.getStoredState();
     return state?.clients.length || 0;
+  }
+
+  sendToPeer(peerId: string, data: any): void {
+    this.connectionManager.sendToPeer(peerId, data);
   }
 
   deactivateServer(): void {
