@@ -1,4 +1,3 @@
-
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { ConnectionManager } from './webrtc/ConnectionManager';
 import { SignalingMessage } from './webrtc/SignalingService';
@@ -13,6 +12,8 @@ import { WebRTCEventManager } from './webrtc/WebRTCEventManager';
 import { WebRTCReconnectionHandler } from './webrtc/WebRTCReconnectionHandler';
 import { WebRTCServerManager } from './webrtc/WebRTCServerManager';
 import { WebRTCClientManager } from './webrtc/WebRTCClientManager';
+import { MeshNetworkManager, DeviceInfo, AddressBook } from './webrtc/MeshNetworkManager';
+import { WebRTCMeshIntegration } from './webrtc/WebRTCMeshIntegration';
 
 class WebRTCService {
   private webrtcConnection = new WebRTCConnection();
@@ -33,6 +34,9 @@ class WebRTCService {
   private isAdmin = false;
   private userId: string | null = null;
   private organizationId: string | null = null;
+
+  private meshManager: MeshNetworkManager | null = null;
+  private meshIntegration: WebRTCMeshIntegration | null = null;
 
   constructor() {
     this.eventManager = new WebRTCEventManager(
@@ -96,6 +100,9 @@ class WebRTCService {
     
     this.updateManagerStates();
     
+    // Initialize mesh network
+    this.initializeMeshNetwork(organizationName);
+    
     const serverOffer = await this.serverManager.createServerOffer(
       organizationId,
       organizationName,
@@ -115,10 +122,56 @@ class WebRTCService {
     
     this.updateManagerStates();
     
+    // Initialize mesh network
+    this.initializeMeshNetwork(userName);
+    
     await this.clientManager.connectToServer(offerData, userId, userName);
     
     this.setupConnectionHandlers();
     this.eventManager.setupIPChangeHandling();
+    
+    // Initiate mesh sync after connection
+    if (this.meshIntegration) {
+      setTimeout(() => {
+        this.meshIntegration?.initiateMeshSync();
+      }, 2000);
+    }
+  }
+
+  private initializeMeshNetwork(deviceName: string): void {
+    if (!this.userId || !this.organizationId) return;
+    
+    this.meshManager = new MeshNetworkManager(
+      this.userId,
+      deviceName,
+      this.organizationId,
+      this.isAdmin
+    );
+    
+    this.meshIntegration = new WebRTCMeshIntegration(
+      this.meshManager,
+      this.connectionManager,
+      this.ipChangeManager
+    );
+    
+    // Listen for address book updates
+    this.meshManager.onAddressBookUpdate((addressBook) => {
+      this.handleMeshNetworkUpdate(addressBook);
+    });
+    
+    console.log('WebRTCService: Mesh network initialized');
+  }
+
+  private handleMeshNetworkUpdate(addressBook: AddressBook): void {
+    // Dispatch event to notify UI about mesh network updates
+    const event = new CustomEvent('webrtc-mesh-network-updated', {
+      detail: {
+        devices: Array.from(addressBook.devices.values()),
+        version: addressBook.version,
+        lastUpdated: addressBook.lastUpdated
+      }
+    });
+    window.dispatchEvent(event);
   }
 
   private updateManagerStates(): void {
@@ -239,6 +292,31 @@ class WebRTCService {
     return statusMap;
   }
 
+  getMeshNetworkStatus() {
+    return this.meshIntegration?.getMeshNetworkStatus() || null;
+  }
+
+  getAllDevicesInNetwork(): DeviceInfo[] {
+    return this.meshIntegration?.getAllDevices() || [];
+  }
+
+  onMeshNetworkUpdate(callback: (devices: DeviceInfo[]) => void): void {
+    window.addEventListener('webrtc-mesh-network-updated', (event: any) => {
+      callback(event.detail.devices);
+    });
+  }
+
+  broadcastToMeshNetwork(data: any): void {
+    if (this.meshManager) {
+      // This will be handled by the mesh integration
+      console.log('WebRTCService: Broadcasting to mesh network:', data);
+    }
+  }
+
+  requestMeshNetworkSync(): void {
+    this.meshIntegration?.initiateMeshSync();
+  }
+
   disconnect(): void {
     this.ipChangeManager.stopMonitoring();
     this.reconnectionManager.clearAllReconnections();
@@ -246,6 +324,13 @@ class WebRTCService {
     this.webrtcConnection.close();
     this.connectionManager.clearPeers();
     this.offerManager.clearLastServerOffer();
+    
+    // Cleanup mesh network
+    if (this.meshManager) {
+      this.meshManager.cleanup();
+      this.meshManager = null;
+    }
+    this.meshIntegration = null;
   }
 
   async forceReconnect(): Promise<void> {
@@ -262,4 +347,4 @@ class WebRTCService {
 }
 
 export const webRTCService = new WebRTCService();
-export type { WebRTCServerOffer, PeerConnection, WebRTCMessage };
+export type { WebRTCServerOffer, PeerConnection, WebRTCMessage, DeviceInfo, AddressBook };

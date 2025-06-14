@@ -1,4 +1,3 @@
-
 import { WebRTCMessage } from './types';
 import { SignalingMessage, SignalingService } from './SignalingService';
 import { PeerManager } from './PeerManager';
@@ -84,7 +83,23 @@ export class DataChannelManager {
           this.sendCurrentLocation();
         }
         break;
+        
+      case 'mesh-data':
+        // Handle mesh network data
+        this.handleMeshData(message.data, peerId);
+        break;
     }
+  }
+
+  private handleMeshData(meshData: any, peerId: string): void {
+    // Forward mesh data to signaling service for processing
+    console.log('DataChannelManager: Received mesh data from', peerId);
+    
+    // Create a custom event for mesh data
+    const event = new CustomEvent('webrtc-mesh-data-received', {
+      detail: { meshData, fromPeerId: peerId }
+    });
+    window.dispatchEvent(event);
   }
 
   // Server method to request location from specific client
@@ -108,6 +123,24 @@ export class DataChannelManager {
     // This will be called by LocationService
     const event = new CustomEvent('webrtc-location-requested');
     window.dispatchEvent(event);
+  }
+
+  sendMeshData(peerId: string, meshData: any): void {
+    const peer = this.peerManager.getPeer(peerId);
+    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
+      const message: WebRTCMessage = {
+        type: 'mesh-data',
+        data: meshData,
+        timestamp: Date.now()
+      };
+      
+      try {
+        peer.dataChannel.send(JSON.stringify(message));
+        console.log('DataChannelManager: Sent mesh data to', peerId);
+      } catch (error) {
+        console.error('DataChannelManager: Failed to send mesh data:', error);
+      }
+    }
   }
 
   onLocationUpdate(callback: (userId: string, location: any) => void) {

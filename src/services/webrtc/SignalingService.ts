@@ -1,8 +1,7 @@
-
 import { WebRTCMessage, WebRTCServerOffer } from './types';
 
 export interface SignalingMessage {
-  type: 'new-offer' | 'new-answer' | 'ice-candidate' | 'ip-changed';
+  type: 'new-offer' | 'new-answer' | 'ice-candidate' | 'ip-changed' | 'mesh-message';
   data: any;
   fromId: string;
   toId?: string; // If not specified, broadcast to all
@@ -87,6 +86,31 @@ export class SignalingService {
     this.broadcastSignalingMessage(message);
   }
 
+  // Send mesh message to specific peer
+  sendMeshMessage(peerId: string, meshData: any) {
+    const message: SignalingMessage = {
+      type: 'mesh-message',
+      data: meshData,
+      fromId: this.isServer ? 'admin' : 'client',
+      toId: peerId,
+      timestamp: Date.now()
+    };
+    
+    this.sendSignalingMessage(peerId, message);
+  }
+
+  // Broadcast mesh message to all peers
+  broadcastMeshMessage(meshData: any) {
+    const message: SignalingMessage = {
+      type: 'mesh-message',
+      data: meshData,
+      fromId: this.isServer ? 'admin' : 'client',
+      timestamp: Date.now()
+    };
+    
+    this.broadcastSignalingMessage(message);
+  }
+
   private sendSignalingMessage(peerId: string, message: SignalingMessage) {
     const dataChannel = this.dataChannels.get(peerId);
     if (dataChannel && dataChannel.readyState === 'open') {
@@ -123,7 +147,7 @@ export class SignalingService {
   private isSignalingMessage(data: any): data is SignalingMessage {
     return data && 
            typeof data === 'object' &&
-           ['new-offer', 'new-answer', 'ice-candidate', 'ip-changed'].includes(data.type) &&
+           ['new-offer', 'new-answer', 'ice-candidate', 'ip-changed', 'mesh-message'].includes(data.type) &&
            data.fromId &&
            typeof data.timestamp === 'number';
   }
