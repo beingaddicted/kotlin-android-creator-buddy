@@ -1,4 +1,3 @@
-
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { SignalingMessage } from './webrtc/SignalingService';
 import { WebRTCServiceCore } from './webrtc/WebRTCServiceCore';
@@ -9,6 +8,7 @@ class WebRTCService {
   private core: WebRTCServiceCore;
   // Removed: private meshService: WebRTCMeshService;
   private managers: WebRTCManagerCollection;
+  private longPollInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.core = new WebRTCServiceCore();
@@ -16,6 +16,10 @@ class WebRTCService {
     this.managers = new WebRTCManagerCollection(this.core);
 
     this.managers.setupEventManagerCallbacks(this.core);
+
+    // Add event listeners for robust client-side reconnection
+    window.addEventListener('webrtc-client-reconnection-needed', this.forceReconnect.bind(this));
+    window.addEventListener('webrtc-connection-lost', this.handlePermanentConnectionLoss.bind(this) as EventListener);
   }
 
   async createServerOffer(organizationId: string, organizationName: string): Promise<WebRTCServerOffer> {
@@ -180,6 +184,34 @@ class WebRTCService {
     return statusMap;
   }
 
+  private handlePermanentConnectionLoss(event: CustomEvent): void {
+    if (!this.core.isAdmin) {
+        console.log('Client connection permanently lost, starting long-poll reconnect strategy.');
+        this.startLongPollReconnect();
+    }
+  }
+
+  private startLongPollReconnect(): void {
+    this.stopLongPollReconnect(); // Ensure no multiple intervals are running
+
+    this.longPollInterval = setInterval(() => {
+        if (this.getConnectionStatus() !== 'connected') {
+            console.log('Long-poll: attempting to reconnect...');
+            this.forceReconnect();
+        } else {
+            console.log('Long-poll: reconnected successfully.');
+            this.stopLongPollReconnect();
+        }
+    }, 30000); // Try to reconnect every 30 seconds
+  }
+  
+  private stopLongPollReconnect(): void {
+      if (this.longPollInterval) {
+          clearInterval(this.longPollInterval);
+          this.longPollInterval = null;
+      }
+  }
+
   // Removed: Mesh network API (getMeshNetworkStatus, getAllDevicesInNetwork, onMeshNetworkUpdate, etc.)
   // All following methods are now stubs for compatibility, but do nothing:
   getMeshNetworkStatus() {
@@ -194,6 +226,9 @@ class WebRTCService {
 
   disconnect(): void {
     this.core.cleanup();
+    this.stopLongPollReconnect();
+    window.removeEventListener('webrtc-client-reconnection-needed', this.forceReconnect.bind(this));
+    window.removeEventListener('webrtc-connection-lost', this.handlePermanentConnectionLoss.bind(this) as EventListener);
     // Removed: this.meshService.cleanup();
   }
 
@@ -212,4 +247,3 @@ class WebRTCService {
 
 export const webRTCService = new WebRTCService();
 export type { WebRTCServerOffer, PeerConnection, WebRTCMessage };
-

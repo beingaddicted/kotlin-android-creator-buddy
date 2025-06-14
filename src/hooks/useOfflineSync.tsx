@@ -1,10 +1,12 @@
-
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
+// Define a specific type for table names to ensure type safety with Supabase client
+type TableName = "billing_history" | "organizations" | "organization_subscriptions" | "locations" | "organization_members" | "profiles";
+
 interface PendingOperation {
   id: string;
-  table: string;
+  table: TableName;
   operation: 'insert' | 'update' | 'delete';
   data: any;
   timestamp: number;

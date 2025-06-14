@@ -1,5 +1,5 @@
 
-import { render, screen } from '@/test-utils/render';
+import { render, screen } from '@testing-library/react';
 import { LoadingSpinner } from '../LoadingSpinner';
 
 describe('LoadingSpinner', () => {

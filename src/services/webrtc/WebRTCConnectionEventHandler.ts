@@ -1,4 +1,3 @@
-
 import { WebRTCConnection } from './WebRTCConnection';
 import { ConnectionManager } from './ConnectionManager';
 import { ReconnectionManager } from './ReconnectionManager';
@@ -87,8 +86,15 @@ export class WebRTCConnectionEventHandler {
   }
 
   private handleConnectionLoss(): void {
-    const peers = this.connectionManager.getConnectedPeers();
+    // Use getAllPeers to ensure we try to reconnect even if status is already 'disconnected'
+    const peers = this.connectionManager.getAllPeers();
     
+    if (peers.length === 0) {
+      console.log('Connection lost, but no known peers to reconnect to. Notifying system.');
+      this.notifyConnectionLost();
+      return;
+    }
+
     peers.forEach(peer => {
       if (this.reconnectionManager.shouldInitiateReconnection(peer.id, 'connection-lost')) {
         const attemptNumber = this.reconnectionManager.startReconnectionAttempt(peer.id, 'connection-lost');
