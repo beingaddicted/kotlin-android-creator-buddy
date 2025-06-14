@@ -1,3 +1,4 @@
+
 import { WebRTCMessage } from './types';
 import { SignalingMessage, SignalingService } from './SignalingService';
 import { PeerManager } from './PeerManager';
@@ -232,7 +233,8 @@ export class DataChannelManager {
     const peer = this.peerManager.getPeer(peerId);
     if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
       const message: WebRTCMessage = {
-        ...data,
+        type: data.type as WebRTCMessage['type'],
+        data: data.data,
         timestamp: Date.now(),
       };
       try {
