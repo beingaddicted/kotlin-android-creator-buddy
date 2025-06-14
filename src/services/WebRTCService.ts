@@ -1,51 +1,15 @@
 
-export interface WebRTCMessage {
-  type: 'location' | 'offer' | 'answer' | 'ice-candidate' | 'join-org' | 'member-status';
-  data: any;
-  userId?: string;
-  organizationId?: string;
-  timestamp: number;
-}
-
-export interface PeerConnection {
-  id: string;
-  name: string;
-  organizationId: string;
-  connection: RTCPeerConnection;
-  dataChannel?: RTCDataChannel;
-  status: 'connecting' | 'connected' | 'disconnected';
-  lastSeen: number;
-}
-
-export interface WebRTCOffer {
-  type: 'webrtc_offer';
-  offer: RTCSessionDescriptionInit;
-  adminId: string;
-  organizationId: string;
-  organizationName: string;
-  timestamp: number;
-}
-
-export interface WebRTCAnswer {
-  type: 'webrtc_answer';
-  answer: RTCSessionDescriptionInit;
-  userId: string;
-  userName: string;
-  organizationId: string;
-  timestamp: number;
-}
+import { WebRTCOffer, WebRTCAnswer, WebRTCMessage, PeerConnection } from './webrtc/types';
+import { ConnectionManager } from './webrtc/ConnectionManager';
 
 class WebRTCService {
   private localConnection: RTCPeerConnection | null = null;
-  private peers: Map<string, PeerConnection> = new Map();
+  private connectionManager = new ConnectionManager();
   private isAdmin = false;
   private userId: string | null = null;
   private organizationId: string | null = null;
-  private onLocationReceived?: (userId: string, location: any) => void;
-  private onPeerStatusChanged?: (peers: PeerConnection[]) => void;
   private pendingIceCandidates: RTCIceCandidate[] = [];
   
-  // STUN servers for NAT traversal
   private rtcConfiguration: RTCConfiguration = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -66,12 +30,10 @@ class WebRTCService {
     const connection = new RTCPeerConnection(this.rtcConfiguration);
     this.localConnection = connection;
     
-    // Setup data channel for location receiving
     connection.ondatachannel = (event) => {
-      this.setupDataChannel(event.channel, 'client');
+      this.connectionManager.setupDataChannel(event.channel, 'client', this.isAdmin);
     };
 
-    // Store ICE candidates for later exchange
     connection.onicecandidate = (event) => {
       if (event.candidate) {
         this.pendingIceCandidates.push(event.candidate);
@@ -79,7 +41,6 @@ class WebRTCService {
       }
     };
 
-    // Create offer
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
 
@@ -103,14 +64,12 @@ class WebRTCService {
     const connection = new RTCPeerConnection(this.rtcConfiguration);
     this.localConnection = connection;
     
-    // Create data channel for location sending
     const dataChannel = connection.createDataChannel('location', {
       ordered: true
     });
     
-    this.setupDataChannel(dataChannel, 'admin');
+    this.connectionManager.setupDataChannel(dataChannel, 'admin', this.isAdmin);
     
-    // Store ICE candidates
     connection.onicecandidate = (event) => {
       if (event.candidate) {
         this.pendingIceCandidates.push(event.candidate);
@@ -118,7 +77,6 @@ class WebRTCService {
       }
     };
 
-    // Set remote description and create answer
     await connection.setRemoteDescription(offerData.offer);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
@@ -142,7 +100,6 @@ class WebRTCService {
     
     await this.localConnection.setRemoteDescription(answerData.answer);
     
-    // Add stored ICE candidates
     for (const candidate of this.pendingIceCandidates) {
       try {
         await this.localConnection.addIceCandidate(candidate);
@@ -152,8 +109,7 @@ class WebRTCService {
     }
     this.pendingIceCandidates = [];
 
-    // Store peer connection
-    this.peers.set(answerData.userId, {
+    this.connectionManager.addPeer({
       id: answerData.userId,
       name: answerData.userName,
       organizationId: answerData.organizationId,
@@ -161,57 +117,6 @@ class WebRTCService {
       status: 'connecting',
       lastSeen: Date.now()
     });
-
-    this.notifyPeerStatusChanged();
-  }
-
-  private setupDataChannel(dataChannel: RTCDataChannel, peerId: string) {
-    dataChannel.onopen = () => {
-      console.log('WebRTC: Data channel opened with', peerId);
-      
-      if (this.isAdmin && this.peers.has(peerId)) {
-        const peer = this.peers.get(peerId)!;
-        peer.status = 'connected';
-        peer.dataChannel = dataChannel;
-        this.peers.set(peerId, peer);
-        this.notifyPeerStatusChanged();
-      }
-    };
-
-    dataChannel.onmessage = (event) => {
-      const message: WebRTCMessage = JSON.parse(event.data);
-      this.handleDataChannelMessage(message, peerId);
-    };
-
-    dataChannel.onclose = () => {
-      console.log('WebRTC: Data channel closed with', peerId);
-      
-      if (this.isAdmin && this.peers.has(peerId)) {
-        const peer = this.peers.get(peerId)!;
-        peer.status = 'disconnected';
-        this.peers.set(peerId, peer);
-        this.notifyPeerStatusChanged();
-      }
-    };
-
-    dataChannel.onerror = (error) => {
-      console.error('WebRTC: Data channel error with', peerId, error);
-    };
-  }
-
-  private handleDataChannelMessage(message: WebRTCMessage, peerId: string) {
-    console.log('WebRTC: Received message:', message.type, 'from:', peerId);
-
-    if (message.type === 'location' && this.isAdmin && this.onLocationReceived) {
-      // Update peer last seen
-      if (this.peers.has(peerId)) {
-        const peer = this.peers.get(peerId)!;
-        peer.lastSeen = Date.now();
-        this.peers.set(peerId, peer);
-      }
-      
-      this.onLocationReceived(peerId, message.data);
-    }
   }
 
   sendLocationUpdate(locationData: any) {
@@ -224,34 +129,24 @@ class WebRTCService {
         timestamp: Date.now()
       };
 
-      // Find the data channel and send
-      const peer = Array.from(this.peers.values())[0];
+      const peer = this.connectionManager.getAllPeers()[0];
       if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
         peer.dataChannel.send(JSON.stringify(message));
         console.log('WebRTC: Location update sent');
-      } else if (this.localConnection.connectionState === 'connected') {
-        // Try to send through any available data channel
-        console.log('WebRTC: Connection established, location update queued');
       }
     }
   }
 
   onLocationUpdate(callback: (userId: string, location: any) => void) {
-    this.onLocationReceived = callback;
+    this.connectionManager.onLocationUpdate(callback);
   }
 
   onPeerStatusUpdate(callback: (peers: PeerConnection[]) => void) {
-    this.onPeerStatusChanged = callback;
-  }
-
-  private notifyPeerStatusChanged() {
-    if (this.onPeerStatusChanged) {
-      this.onPeerStatusChanged(Array.from(this.peers.values()));
-    }
+    this.connectionManager.onPeerStatusUpdate(callback);
   }
 
   getConnectedPeers(): PeerConnection[] {
-    return Array.from(this.peers.values()).filter(peer => peer.status === 'connected');
+    return this.connectionManager.getConnectedPeers();
   }
 
   getConnectionStatus(): 'disconnected' | 'connecting' | 'connected' {
@@ -269,14 +164,10 @@ class WebRTCService {
       this.localConnection = null;
     }
 
-    this.peers.forEach(peer => {
-      peer.connection.close();
-    });
-
-    this.peers.clear();
+    this.connectionManager.clearPeers();
     this.pendingIceCandidates = [];
-    this.notifyPeerStatusChanged();
   }
 }
 
 export const webRTCService = new WebRTCService();
+export type { WebRTCOffer, WebRTCAnswer, PeerConnection, WebRTCMessage };

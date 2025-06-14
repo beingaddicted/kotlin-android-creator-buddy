@@ -19,7 +19,6 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
 
   useEffect(() => {
     return () => {
-      // Cleanup scanner on unmount
       if (scannerRef.current) {
         scannerRef.current.stop();
         scannerRef.current.destroy();
@@ -34,7 +33,6 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
       setError("");
       setIsScanning(true);
 
-      // Check if QR scanner is supported
       const hasCamera = await QrScanner.hasCamera();
       if (!hasCamera) {
         throw new Error("No camera found on this device");
@@ -75,9 +73,10 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
   const handleQRResult = (qrString: string) => {
     const qrData = qrService.parseQRData(qrString);
     
-    if (qrData) {
+    if (qrData && 'type' in qrData && qrData.type === 'organization_invite') {
+      const organizationData = qrData as QRData;
       stopScanning();
-      onQRScanned(qrData);
+      onQRScanned(organizationData);
     } else {
       setError("Invalid QR code. Please scan a valid organization QR code.");
     }
