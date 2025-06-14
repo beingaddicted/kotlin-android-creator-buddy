@@ -1,13 +1,17 @@
-
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AdminDashboard } from "@/components/AdminDashboard";
 import { UserInterface } from "@/components/UserInterface";
 import { Shield, Users } from "lucide-react";
+import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
+import { useNavigate } from "react-router-dom";
+import { useCallback } from "react";
 
 const Index = () => {
   const [mode, setMode] = useState<'select' | 'admin' | 'user'>('select');
+  const { user, signOut } = useSupabaseAuth();
+  const navigate = useNavigate();
 
   if (mode === 'admin') {
     return <AdminDashboard onBack={() => setMode('select')} />;
@@ -23,6 +27,25 @@ const Index = () => {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">LocationSync</h1>
           <p className="text-gray-600">Decentralized Location Tracking</p>
+
+          {user ? (
+            <div className="flex flex-col items-center my-3 space-y-2">
+              <div className="text-green-700 font-medium">Logged in as {user.email}</div>
+              <button
+                className="text-blue-800 text-sm underline underline-offset-2"
+                onClick={() => signOut()}
+              >
+                Log out
+              </button>
+            </div>
+          ) : (
+            <button
+              className="text-blue-800 text-sm underline underline-offset-2 my-3"
+              onClick={() => navigate("/auth")}
+            >
+              Login / Sign Up
+            </button>
+          )}
         </div>
         
         <div className="space-y-4">
