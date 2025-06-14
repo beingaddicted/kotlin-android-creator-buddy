@@ -11,7 +11,7 @@ export interface SignalingMessage {
 
 export class SignalingService {
   private dataChannels = new Map<string, RTCDataChannel>();
-  private onSignalingMessage?: (message: SignalingMessage, fromPeerId: string) => void;
+  private signalingMessageHandler?: (message: SignalingMessage, fromPeerId: string) => void;
   private isServer: boolean = false;
 
   setAsServer(isServer: boolean) {
@@ -115,8 +115,8 @@ export class SignalingService {
   }
 
   private handleSignalingMessage(message: SignalingMessage, fromPeerId: string) {
-    if (this.onSignalingMessage) {
-      this.onSignalingMessage(message, fromPeerId);
+    if (this.signalingMessageHandler) {
+      this.signalingMessageHandler(message, fromPeerId);
     }
   }
 
@@ -128,8 +128,8 @@ export class SignalingService {
            typeof data.timestamp === 'number';
   }
 
-  onSignalingMessage(callback: (message: SignalingMessage, fromPeerId: string) => void) {
-    this.onSignalingMessage = callback;
+  setSignalingMessageHandler(callback: (message: SignalingMessage, fromPeerId: string) => void) {
+    this.signalingMessageHandler = callback;
   }
 
   removeDataChannel(peerId: string) {

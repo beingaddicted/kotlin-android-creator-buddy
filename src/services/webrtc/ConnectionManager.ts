@@ -14,7 +14,7 @@ export class ConnectionManager {
     this.signalingService.setAsServer(isServer);
     
     // Setup signaling message handler
-    this.signalingService.onSignalingMessage((message, fromPeerId) => {
+    this.signalingService.setSignalingMessageHandler((message, fromPeerId) => {
       if (this.onSignalingReceived) {
         this.onSignalingReceived(message, fromPeerId);
       }
