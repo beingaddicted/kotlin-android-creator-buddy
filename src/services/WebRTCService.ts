@@ -41,6 +41,13 @@ class WebRTCService {
     this.setupConnectionHandlers();
     this.managers.eventManager.setupIPChangeHandling();
 
+    // Setup enhanced reconnection if available
+    if (this.core.enhancedReconnectionManager) {
+      this.core.enhancedReconnectionManager.onReconnectionStarted((clientIds) => {
+        console.log('WebRTCService: Enhanced reconnection started for clients:', clientIds);
+      });
+    }
+
     return serverOffer;
   }
 
@@ -230,6 +237,20 @@ class WebRTCService {
 
   getStoredClientCount(): number {
     return this.managers.serverManager.getStoredClientCount();
+  }
+
+  isEnhancedSignalingAvailable(): boolean {
+    return this.core.isEnhancedSignalingAvailable();
+  }
+
+  getEnhancedReconnectionStatus(): {
+    available: boolean;
+    connected: boolean;
+  } {
+    return {
+      available: !!this.core.enhancedReconnectionManager,
+      connected: this.core.enhancedReconnectionManager?.isSignalingConnected() || false
+    };
   }
 }
 

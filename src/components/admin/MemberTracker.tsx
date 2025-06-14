@@ -44,11 +44,16 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
   const [detailedReconnectionStatus, setDetailedReconnectionStatus] = useState<Map<string, any>>(new Map());
   const [autoReconnectionStarted, setAutoReconnectionStarted] = useState(false);
   const [storedClientCount, setStoredClientCount] = useState(0);
+  const [enhancedSignalingStatus, setEnhancedSignalingStatus] = useState<{
+    available: boolean;
+    connected: boolean;
+  }>({ available: false, connected: false });
 
   useEffect(() => {
     if (selectedOrg && !showQRGenerator) {
       checkWebRTCStatus();
       checkAutoReconnectionCapability();
+      checkEnhancedSignaling();
     } else if (!selectedOrg) {
       cleanupWebRTC();
     }
@@ -117,6 +122,11 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
       setStoredClientCount(clientCount);
       console.log(`Found ${clientCount} stored clients for potential auto-reconnection`);
     }
+  };
+
+  const checkEnhancedSignaling = () => {
+    const status = webRTCService.getEnhancedReconnectionStatus();
+    setEnhancedSignalingStatus(status);
   };
 
   const setupWebRTCListeners = () => {
@@ -275,11 +285,24 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
                  isReconnecting ? `Reconnecting (${reconnectAttempts}/5)` : 'Server Offline'}
               </span>
             </div>
+            {enhancedSignalingStatus.available && (
+              <div className="flex items-center space-x-1">
+                <div className={`w-2 h-2 rounded-full ${
+                  enhancedSignalingStatus.connected ? 'bg-blue-500' : 'bg-gray-400'
+                }`} />
+                <span className={`text-xs ${
+                  enhancedSignalingStatus.connected ? 'text-blue-600' : 'text-gray-500'
+                }`}>
+                  Enhanced Signaling {enhancedSignalingStatus.connected ? 'Active' : 'Offline'}
+                </span>
+              </div>
+            )}
             {storedClientCount > 0 && webRTCStatus === 'disconnected' && (
               <div className="flex items-center space-x-1">
                 <MapPin className="w-4 h-4 text-blue-600" />
                 <span className="text-sm text-blue-600">
                   {storedClientCount} stored clients
+                  {enhancedSignalingStatus.connected ? ' (Enhanced)' : ''}
                 </span>
               </div>
             )}
@@ -308,6 +331,19 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
           </Button>
         </div>
       </div>
+
+      {enhancedSignalingStatus.available && enhancedSignalingStatus.connected && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="py-3">
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+              <span className="text-sm text-blue-700 font-medium">
+                Enhanced reconnection available - clients can reconnect even after extended downtime
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {autoReconnectionStarted && (
         <Card className="border-blue-200 bg-blue-50">
