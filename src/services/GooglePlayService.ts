@@ -99,6 +99,58 @@ export class GooglePlayService {
       return { status: 'expired' };
     }
   }
+
+  async validatePurchase(purchaseToken: string, productId: string): Promise<{
+    valid: boolean;
+    subscriptionData?: any;
+    error?: string;
+  }> {
+    try {
+      console.log(`Validating purchase: ${purchaseToken} for product: ${productId}`);
+      
+      // Simulate validation with Google Play Developer API
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Mock validation response
+      return {
+        valid: true,
+        subscriptionData: {
+          orderId: `order_${Date.now()}`,
+          purchaseTime: Date.now(),
+          expiryTime: Date.now() + (30 * 24 * 60 * 60 * 1000), // 30 days
+          autoRenewing: true
+        }
+      };
+    } catch (error) {
+      console.error('Failed to validate purchase:', error);
+      return {
+        valid: false,
+        error: 'Purchase validation failed'
+      };
+    }
+  }
+
+  async refreshSubscriptionStatus(subscriptionId: string): Promise<{
+    status: 'active' | 'expired' | 'canceled' | 'pending';
+    autoRenewing?: boolean;
+    expirationDate?: Date;
+  }> {
+    try {
+      console.log(`Refreshing subscription status: ${subscriptionId}`);
+      
+      // Simulate API call to Google Play
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      return {
+        status: 'active',
+        autoRenewing: true,
+        expirationDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      };
+    } catch (error) {
+      console.error('Failed to refresh subscription status:', error);
+      return { status: 'expired' };
+    }
+  }
 }
 
 export const googlePlayService = GooglePlayService.getInstance();
