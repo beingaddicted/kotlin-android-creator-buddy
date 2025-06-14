@@ -221,7 +221,7 @@ export class DataChannelManager {
     }
   }
 
-  sendSecureMessage(peerId: string, message: any, messageType: string): Promise<void> {
+  async sendSecureMessage(peerId: string, message: any, messageType: string): Promise<void> {
     if (!window.securityManager) {
       // Fallback to unencrypted
       this.sendMessage(peerId, message, messageType);
