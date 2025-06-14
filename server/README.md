@@ -1,15 +1,27 @@
 
-# WebRTC Signaling Server
+# Enhanced WebRTC Signaling Server
 
-A minimal signaling server to enable admin-initiated WebRTC connections.
+An advanced signaling server with queuing, state management, and reconnection handling for admin-initiated WebRTC connections.
 
-## Features
+## 🆕 Advanced Features
 
-- **WebSocket Communication**: Real-time signaling between admins and clients
-- **HTTP Fallback**: REST API for polling-based communication
-- **Connection Management**: Track online/offline clients and admins
-- **Heartbeat Monitoring**: Automatic cleanup of stale connections
-- **Organization Support**: Multi-tenant organization isolation
+### Connection Request Queuing
+- **Offline Client Support**: Admins can request connections to offline clients
+- **Automatic Processing**: Queued requests are automatically processed when clients come online
+- **Priority Handling**: Support for priority levels on connection requests
+- **Queue Management**: Automatic cleanup and size limits to prevent memory issues
+
+### Enhanced State Management
+- **Persistent Client Data**: Client information persists across disconnections
+- **Connection History**: Track all connection attempts and their outcomes
+- **Reconnection Detection**: Differentiate between new connections and reconnections
+- **Comprehensive Status Tracking**: Detailed online/offline status with timestamps
+
+### Advanced Admin Features
+- **Enhanced Client Lists**: Detailed client information including history and pending requests
+- **Pending Notifications**: Get notified about events that happened while offline
+- **Connection Analytics**: Track connection success rates and patterns
+- **Real-time Updates**: Instant notifications for all client status changes
 
 ## Setup
 
@@ -28,11 +40,11 @@ npm run dev
 
 3. Server will run on port 3001 by default
 
-## API Endpoints
+## API Reference
 
 ### WebSocket Messages
 
-#### Admin Registration
+#### Enhanced Admin Registration
 ```json
 {
   "type": "register_admin",
@@ -41,7 +53,17 @@ npm run dev
 }
 ```
 
-#### Client Registration
+**Response:**
+```json
+{
+  "type": "admin_registered",
+  "adminId": "admin-123",
+  "organizationId": "org-456",
+  "reconnected": false
+}
+```
+
+#### Enhanced Client Registration
 ```json
 {
   "type": "register_client",
@@ -52,40 +74,174 @@ npm run dev
 }
 ```
 
-#### Admin Connection Request
+**Response:**
+```json
+{
+  "type": "client_registered",
+  "clientId": "client-789",
+  "adminId": "admin-123",
+  "reconnected": false
+}
+```
+
+#### Connection Request with Priority
 ```json
 {
   "type": "admin_connect_request",
   "clientId": "client-789",
-  "offerData": { "offer": "...", "serverIp": "..." }
+  "offerData": { "offer": "...", "serverIp": "..." },
+  "priority": "high"
 }
 ```
 
-#### Client Response
+**Responses:**
+```json
+// For online clients
+{
+  "type": "connection_request_sent",
+  "requestId": "req-123",
+  "clientId": "client-789"
+}
+
+// For offline clients
+{
+  "type": "connection_request_queued",
+  "requestId": "req-123",
+  "clientId": "client-789",
+  "message": "Client is offline. Request queued for when client comes online."
+}
+```
+
+#### Cancel Connection Request
 ```json
 {
-  "type": "client_response",
-  "accepted": true,
-  "answerData": { "answer": "..." }
+  "type": "cancel_connection_request",
+  "requestId": "req-123"
 }
 ```
 
-### HTTP Endpoints
+#### Get Client History
+```json
+{
+  "type": "get_client_history",
+  "clientId": "client-789"
+}
+```
 
-- `GET /api/health` - Server health check
-- `POST /api/admin/:adminId/connect/:clientId` - Request connection to client
-- `GET /api/client/:clientId/requests` - Check for pending connection requests
+### Enhanced HTTP Endpoints
 
-## Integration with WebRTC App
+#### Server Statistics
+- `GET /api/stats` - Comprehensive server statistics
+```json
+{
+  "timestamp": 1640995200000,
+  "clients": {
+    "total": 25,
+    "online": 18,
+    "offline": 7
+  },
+  "admins": {
+    "total": 3,
+    "online": 2
+  },
+  "requests": {
+    "pending": 5,
+    "queued": 12,
+    "total": 23
+  }
+}
+```
 
-The client app needs to:
-1. Connect to signaling server on startup
-2. Register as client/admin
-3. Listen for connection requests
-4. Send periodic heartbeats
+#### Enhanced Client List
+- `GET /api/admin/:adminId/clients` - Get detailed client list for admin
+```json
+{
+  "clients": [
+    {
+      "clientId": "client-789",
+      "userName": "John Doe",
+      "status": "online",
+      "lastSeen": 1640995200000,
+      "pendingRequests": 1
+    }
+  ]
+}
+```
 
-This enables:
-- Admin can see list of connected/previous clients
-- Admin can initiate connection to any client
-- Client receives connection request even when app is backgrounded
-- Automatic fallback to HTTP polling if WebSocket fails
+#### Advanced Connection Request
+- `POST /api/admin/:adminId/connect/:clientId` - Request connection with queuing support
+```json
+{
+  "offerData": { "offer": "...", "serverIp": "..." },
+  "priority": "high"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "requestId": "req-123",
+  "message": "Connection request sent to online client",
+  "queued": false
+}
+```
+
+## Advanced Client Notifications
+
+### Queued Request Processing
+When an offline client comes back online:
+```json
+{
+  "type": "queued_request_processing",
+  "requestId": "req-123",
+  "clientId": "client-789",
+  "message": "Client came online. Processing queued connection request."
+}
+```
+
+### Enhanced Client List Updates
+Admins receive detailed client information:
+```json
+{
+  "type": "enhanced_client_list",
+  "clients": [...],
+  "totalClients": 25,
+  "onlineClients": 18
+}
+```
+
+### Pending Notifications
+When admins reconnect:
+```json
+{
+  "type": "pending_notifications",
+  "notifications": [
+    {
+      "type": "client_recently_online",
+      "clientId": "client-789",
+      "userName": "John Doe",
+      "timestamp": 1640995200000
+    }
+  ]
+}
+```
+
+## Key Improvements
+
+1. **Offline Client Support**: Admins can now initiate connections to offline clients through queuing
+2. **Better Reconnection**: Smart detection and handling of reconnections vs new connections
+3. **Persistent State**: Client and admin data persists across disconnections
+4. **Enhanced Monitoring**: Comprehensive statistics and history tracking
+5. **Improved UX**: Better notifications and status updates for admins
+6. **Scalability**: Efficient memory management and cleanup processes
+
+## Integration Notes
+
+- The enhanced server maintains backward compatibility with basic WebSocket messages
+- New features are opt-in through additional message types and endpoints
+- Existing WebRTC P2P functionality remains unchanged
+- Enhanced features provide better admin dashboard experience
+- Queue system enables reliable connection establishment even with unreliable client connectivity
+
+This advanced server significantly improves the reliability and user experience of admin-initiated WebRTC connections by handling the complexities of real-world network conditions and client availability.
