@@ -1,14 +1,24 @@
-
 import { PeerConnection, WebRTCMessage } from './types';
+import { SignalingService, SignalingMessage } from './SignalingService';
 
 export class ConnectionManager {
   private peers = new Map<string, PeerConnection>();
   private onLocationReceived?: (userId: string, location: any) => void;
   private onPeerStatusChanged?: (peers: PeerConnection[]) => void;
+  private onSignalingReceived?: (message: SignalingMessage, fromPeerId: string) => void;
   private isServer = false;
+  private signalingService = new SignalingService();
 
   setAsServer(isServer: boolean) {
     this.isServer = isServer;
+    this.signalingService.setAsServer(isServer);
+    
+    // Setup signaling message handler
+    this.signalingService.onSignalingMessage((message, fromPeerId) => {
+      if (this.onSignalingReceived) {
+        this.onSignalingReceived(message, fromPeerId);
+      }
+    });
   }
 
   setupDataChannel(dataChannel: RTCDataChannel, peerId: string) {
@@ -22,6 +32,9 @@ export class ConnectionManager {
         this.peers.set(peerId, peer);
         this.notifyPeerStatusChanged();
         
+        // Register with signaling service
+        this.signalingService.registerDataChannel(peerId, dataChannel);
+        
         // If server, request initial location from client
         if (this.isServer) {
           this.requestLocationUpdate(peerId);
@@ -30,8 +43,16 @@ export class ConnectionManager {
     };
 
     dataChannel.onmessage = (event) => {
-      const message: WebRTCMessage = JSON.parse(event.data);
-      this.handleDataChannelMessage(message, peerId);
+      const message = JSON.parse(event.data);
+      
+      // Check if it's a signaling message or regular WebRTC message
+      if (this.isSignalingMessage(message)) {
+        // Let SignalingService handle it
+        return;
+      } else {
+        // Handle as regular WebRTC message
+        this.handleDataChannelMessage(message as WebRTCMessage, peerId);
+      }
     };
 
     dataChannel.onclose = () => {
@@ -43,11 +64,21 @@ export class ConnectionManager {
         this.peers.set(peerId, peer);
         this.notifyPeerStatusChanged();
       }
+      
+      this.signalingService.removeDataChannel(peerId);
     };
 
     dataChannel.onerror = (error) => {
       console.error('WebRTC: Data channel error with', peerId, error);
     };
+  }
+
+  private isSignalingMessage(data: any): boolean {
+    return data && 
+           typeof data === 'object' &&
+           ['new-offer', 'new-answer', 'ice-candidate', 'ip-changed'].includes(data.type) &&
+           data.fromId &&
+           typeof data.timestamp === 'number';
   }
 
   private handleDataChannelMessage(message: WebRTCMessage, peerId: string) {
@@ -143,11 +174,33 @@ export class ConnectionManager {
     window.dispatchEvent(event);
   }
 
+  // Signaling methods
+  sendNewOffer(peerId: string, offer: any) {
+    this.signalingService.sendNewOffer(peerId, offer);
+  }
+
+  sendNewAnswer(adminId: string, answer: RTCSessionDescriptionInit) {
+    this.signalingService.sendNewAnswer(adminId, answer);
+  }
+
+  sendIceCandidate(peerId: string, candidate: RTCIceCandidate) {
+    this.signalingService.sendIceCandidate(peerId, candidate);
+  }
+
+  notifyIpChange(newIp: string) {
+    this.signalingService.notifyIpChange(newIp);
+  }
+
+  onSignalingMessage(callback: (message: SignalingMessage, fromPeerId: string) => void) {
+    this.onSignalingReceived = callback;
+  }
+
   clearPeers() {
     this.peers.forEach(peer => {
       peer.connection.close();
     });
     this.peers.clear();
+    this.signalingService.clearDataChannels();
     this.notifyPeerStatusChanged();
   }
 
