@@ -1,3 +1,4 @@
+
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { SignalingMessage } from './webrtc/SignalingService';
 import { WebRTCServiceCore } from './webrtc/WebRTCServiceCore';
@@ -251,7 +252,7 @@ class WebRTCService {
     }
     const doReconnect = async () => {
       if (this.getConnectionStatus() !== 'connected') {
-        console.log(`Reconnection attempt (interval: ${this.backoff!.currentInterval} ms)...`);
+        console.log(`Reconnection attempt (interval: ${this.backoff!.getCurrentInterval()} ms)...`);
         await this.forceReconnect();
         this.longPollInterval = setTimeout(doReconnect, this.backoff!.getNextInterval());
       } else {

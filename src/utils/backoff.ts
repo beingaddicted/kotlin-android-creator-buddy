@@ -24,6 +24,10 @@ export class ExponentialBackoff {
     return interval;
   }
 
+  getCurrentInterval() {
+    return this.currentInterval;
+  }
+
   reset() {
     this.currentInterval = this.initialInterval;
   }
