@@ -1,4 +1,3 @@
-
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { SignalingMessage } from './webrtc/SignalingService';
 import { DeviceInfo, AddressBook } from './webrtc/MeshNetworkManager';
@@ -126,6 +125,14 @@ class WebRTCService {
   requestLocationFromAllClients(): void {
     if (!this.core.isAdmin) return;
     this.managers.serverManager.requestLocationFromAllClients();
+  }
+
+  sendToPeer(peerId: string, data: any): void {
+    if (!this.core.isAdmin) {
+      console.warn('Only admin can send data to a specific peer.');
+      return;
+    }
+    this.managers.serverManager.connectionManager.sendToPeer(peerId, data);
   }
 
   sendLocationUpdate(locationData: any): void {

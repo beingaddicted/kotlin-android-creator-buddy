@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,15 +9,10 @@ import { QRGenerator } from "./admin/QRGenerator";
 import { MemberTracker } from "./admin/MemberTracker";
 import { webRTCService } from "@/services/WebRTCService";
 import { toast } from "sonner";
+import { JoinRequests, JoinRequest } from "./admin/JoinRequests";
 
 interface AdminDashboardProps {
   onBack: () => void;
-}
-
-interface JoinRequest {
-  peerId: string;
-  userData: any;
-  qrData: any;
 }
 
 export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
@@ -64,9 +60,7 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
       type: 'join_response',
       status: approved ? 'approved' : 'denied'
     };
-    if (webRTCService.serverManager?.connectionManager) {
-      webRTCService.serverManager.connectionManager.sendToPeer(request.peerId, response);
-    }
+    webRTCService.sendToPeer(request.peerId, response);
 
     // Remove invite code to make it one-time use
     const pendingInvites = JSON.parse(localStorage.getItem('pendingInvites') || '[]');
@@ -95,38 +89,7 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
       default:
         return (
           <div className="space-y-6">
-            {joinRequests.length > 0 && (
-              <Card className="border-blue-500">
-                <CardHeader>
-                  <CardTitle className="flex items-center">
-                    <UserPlus className="w-5 h-5 mr-2 text-blue-500" />
-                    Pending Join Requests
-                    <Badge variant="destructive" className="ml-2">{joinRequests.length}</Badge>
-                  </CardTitle>
-                  <CardDescription>
-                    New users want to join your organizations. Approve or deny their requests.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {joinRequests.map(req => (
-                    <div key={req.qrData.inviteCode} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div>
-                        <p className="font-semibold">{req.userData.name} <span className="font-normal text-gray-600">(Age: {req.userData.age})</span></p>
-                        <p className="text-sm text-gray-500">Wants to join: <strong>{req.qrData.organizationName}</strong></p>
-                      </div>
-                      <div className="flex space-x-2">
-                        <Button size="sm" variant="outline" className="text-red-600 hover:bg-red-50" onClick={() => handleApproval(req, false)}>
-                          <X className="w-4 h-4 mr-1" /> Deny
-                        </Button>
-                        <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => handleApproval(req, true)}>
-                          <Check className="w-4 h-4 mr-1" /> Approve
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
+            <JoinRequests joinRequests={joinRequests} onApproval={handleApproval} />
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <Card className="hover:shadow-lg transition-shadow">

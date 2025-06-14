@@ -33,7 +33,7 @@ class QRService {
         }
       });
 
-      return { qrCodeDataURL, inviteCode };
+      return { qrDataURL: qrCodeDataURL, inviteCode };
     } catch (error) {
       console.error('QR Code generation failed:', error);
       throw new Error('Failed to generate QR code');
