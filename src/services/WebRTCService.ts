@@ -12,6 +12,8 @@ class WebRTCService {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectInterval: NodeJS.Timeout | null = null;
+  private lastServerOffer: WebRTCServerOffer | null = null;
+  private isReconnecting = false;
   
   private rtcConfiguration: RTCConfiguration = {
     iceServers: [
@@ -20,7 +22,8 @@ class WebRTCService {
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' }
-    ]
+    ],
+    iceCandidatePoolSize: 10
   };
 
   async createServerOffer(organizationId: string, organizationName: string): Promise<WebRTCServerOffer> {
@@ -39,24 +42,12 @@ class WebRTCService {
       ordered: true
     });
     
-    connection.onicecandidate = (event) => {
-      if (event.candidate) {
-        this.pendingIceCandidates.push(event.candidate);
-        console.log('ICE candidate generated, total:', this.pendingIceCandidates.length);
-      }
-    };
-
-    connection.onconnectionstatechange = () => {
-      console.log('Connection state changed:', connection.connectionState);
-      if (connection.connectionState === 'disconnected' || connection.connectionState === 'failed') {
-        this.handleReconnection();
-      }
-    };
+    this.setupConnectionEventHandlers(connection);
 
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
 
-    return {
+    const serverOffer: WebRTCServerOffer = {
       type: 'webrtc_server_offer',
       offer,
       adminId: this.userId,
@@ -65,6 +56,9 @@ class WebRTCService {
       timestamp: Date.now(),
       serverIp: await this.getLocalIP()
     };
+
+    this.lastServerOffer = serverOffer;
+    return serverOffer;
   }
 
   async connectToServer(offerData: WebRTCServerOffer, userId: string, userName: string): Promise<void> {
@@ -72,6 +66,7 @@ class WebRTCService {
     this.userId = userId;
     this.organizationId = offerData.organizationId;
     this.connectionManager.setAsServer(false);
+    this.lastServerOffer = offerData;
     
     console.log('WebRTC: Connecting to server');
     
@@ -82,22 +77,7 @@ class WebRTCService {
       this.connectionManager.setupDataChannel(event.channel, offerData.adminId);
     };
     
-    connection.onicecandidate = (event) => {
-      if (event.candidate) {
-        this.pendingIceCandidates.push(event.candidate);
-        console.log('ICE candidate generated, total:', this.pendingIceCandidates.length);
-      }
-    };
-
-    connection.onconnectionstatechange = () => {
-      console.log('Connection state changed:', connection.connectionState);
-      if (connection.connectionState === 'connected') {
-        this.reconnectAttempts = 0;
-        console.log('Successfully connected to server');
-      } else if (connection.connectionState === 'disconnected' || connection.connectionState === 'failed') {
-        this.handleReconnection();
-      }
-    };
+    this.setupConnectionEventHandlers(connection);
 
     await connection.setRemoteDescription(offerData.offer);
     const answer = await connection.createAnswer();
@@ -124,6 +104,167 @@ class WebRTCService {
     });
   }
 
+  private setupConnectionEventHandlers(connection: RTCPeerConnection) {
+    connection.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.pendingIceCandidates.push(event.candidate);
+        console.log('ICE candidate generated, total:', this.pendingIceCandidates.length);
+      }
+    };
+
+    connection.onconnectionstatechange = () => {
+      console.log('Connection state changed:', connection.connectionState);
+      
+      if (connection.connectionState === 'connected') {
+        this.reconnectAttempts = 0;
+        this.isReconnecting = false;
+        console.log('Successfully connected to peer');
+        
+        if (this.reconnectInterval) {
+          clearTimeout(this.reconnectInterval);
+          this.reconnectInterval = null;
+        }
+      } else if (connection.connectionState === 'disconnected' || connection.connectionState === 'failed') {
+        if (!this.isReconnecting) {
+          console.log('Connection lost, attempting reconnection...');
+          this.handleReconnection();
+        }
+      }
+    };
+
+    // Handle ICE connection state changes for better reconnection detection
+    connection.oniceconnectionstatechange = () => {
+      console.log('ICE connection state:', connection.iceConnectionState);
+      
+      if (connection.iceConnectionState === 'disconnected' || connection.iceConnectionState === 'failed') {
+        if (!this.isReconnecting && this.reconnectAttempts < this.maxReconnectAttempts) {
+          console.log('ICE connection lost, triggering reconnection...');
+          this.handleReconnection();
+        }
+      }
+    };
+  }
+
+  private async handleReconnection() {
+    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) {
+      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.error('Max reconnection attempts reached. Connection permanently lost.');
+        this.notifyConnectionLost();
+      }
+      return;
+    }
+
+    this.isReconnecting = true;
+    this.reconnectAttempts++;
+    console.log(`Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+
+    try {
+      // Wait before attempting reconnection with exponential backoff
+      const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
+      await new Promise(resolve => setTimeout(resolve, delay));
+
+      if (!this.localConnection) {
+        console.error('No local connection available for reconnection');
+        this.isReconnecting = false;
+        return;
+      }
+
+      // Try ICE restart first
+      await this.performICERestart();
+
+    } catch (error) {
+      console.error('Reconnection failed:', error);
+      this.isReconnecting = false;
+      
+      // Schedule next reconnection attempt
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectInterval = setTimeout(() => {
+          this.handleReconnection();
+        }, 5000);
+      } else {
+        this.notifyConnectionLost();
+      }
+    }
+  }
+
+  private async performICERestart() {
+    if (!this.localConnection) return;
+
+    console.log('Performing ICE restart...');
+    
+    try {
+      // Create new offer with ICE restart
+      const offer = await this.localConnection.createOffer({ iceRestart: true });
+      await this.localConnection.setLocalDescription(offer);
+      
+      // Clear pending candidates
+      this.pendingIceCandidates = [];
+      
+      // For client reconnection, we need the server offer again
+      if (!this.isAdmin && this.lastServerOffer) {
+        console.log('Client performing full reconnection...');
+        await this.reconnectAsClient();
+      }
+      
+      this.isReconnecting = false;
+      console.log('ICE restart completed');
+      
+    } catch (error) {
+      console.error('ICE restart failed:', error);
+      throw error;
+    }
+  }
+
+  private async reconnectAsClient() {
+    if (!this.lastServerOffer || !this.userId) return;
+
+    try {
+      console.log('Client reconnecting to server...');
+      
+      // Create new connection
+      const newConnection = new RTCPeerConnection(this.rtcConfiguration);
+      
+      // Close old connection
+      if (this.localConnection) {
+        this.localConnection.close();
+      }
+      
+      this.localConnection = newConnection;
+      
+      // Setup handlers for new connection
+      this.setupConnectionEventHandlers(newConnection);
+      
+      newConnection.ondatachannel = (event) => {
+        this.connectionManager.setupDataChannel(event.channel, this.lastServerOffer!.adminId);
+      };
+      
+      // Set remote description and create answer
+      await newConnection.setRemoteDescription(this.lastServerOffer.offer);
+      const answer = await newConnection.createAnswer();
+      await newConnection.setLocalDescription(answer);
+      
+      console.log('Client reconnection initiated');
+      
+    } catch (error) {
+      console.error('Client reconnection failed:', error);
+      throw error;
+    }
+  }
+
+  private notifyConnectionLost() {
+    console.log('Connection permanently lost - may need to re-scan QR code');
+    
+    // Dispatch custom event for UI to handle
+    const event = new CustomEvent('webrtc-connection-lost', {
+      detail: {
+        isAdmin: this.isAdmin,
+        organizationId: this.organizationId,
+        reconnectAttempts: this.reconnectAttempts
+      }
+    });
+    window.dispatchEvent(event);
+  }
+
   // Admin method to request location from specific client
   requestLocationFromClient(clientId: string) {
     if (!this.isAdmin) return;
@@ -140,26 +281,6 @@ class WebRTCService {
   sendLocationUpdate(locationData: any) {
     if (this.isAdmin) return;
     this.connectionManager.sendLocationUpdate(locationData);
-  }
-
-  private async handleReconnection() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
-      return;
-    }
-
-    this.reconnectAttempts++;
-    console.log(`Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-
-    // Wait before attempting reconnection
-    await new Promise(resolve => setTimeout(resolve, 2000 * this.reconnectAttempts));
-
-    try {
-      // Re-establish connection logic would go here
-      console.log('Reconnection logic would be implemented here');
-    } catch (error) {
-      console.error('Reconnection failed:', error);
-    }
   }
 
   private async getLocalIP(): Promise<string> {
@@ -218,6 +339,14 @@ class WebRTCService {
     return 'disconnected';
   }
 
+  isCurrentlyReconnecting(): boolean {
+    return this.isReconnecting;
+  }
+
+  getReconnectAttempts(): number {
+    return this.reconnectAttempts;
+  }
+
   disconnect() {
     if (this.reconnectInterval) {
       clearTimeout(this.reconnectInterval);
@@ -232,6 +361,16 @@ class WebRTCService {
     this.connectionManager.clearPeers();
     this.pendingIceCandidates = [];
     this.reconnectAttempts = 0;
+    this.isReconnecting = false;
+    this.lastServerOffer = null;
+  }
+
+  // Method to manually trigger reconnection (for UI buttons)
+  async forceReconnect() {
+    if (this.isReconnecting) return;
+    
+    this.reconnectAttempts = 0;
+    await this.handleReconnection();
   }
 }
 

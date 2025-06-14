@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MapPin, Users, Clock, RefreshCw, Wifi, WifiOff, QrCode } from "lucide-react";
+import { MapPin, Users, Clock, RefreshCw, Wifi, WifiOff, QrCode, AlertCircle } from "lucide-react";
 import { MapView } from "./MapView";
 import { WebRTCQRGenerator } from "./WebRTCQRGenerator";
 import { webRTCService, PeerConnection } from "@/services/WebRTCService";
@@ -36,6 +36,9 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
   const [webRTCStatus, setWebRTCStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [connectedPeers, setConnectedPeers] = useState<PeerConnection[]>([]);
   const [showQRGenerator, setShowQRGenerator] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const [connectionLost, setConnectionLost] = useState(false);
 
   useEffect(() => {
     if (selectedOrg && !showQRGenerator) {
@@ -44,6 +47,39 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
       cleanupWebRTC();
     }
   }, [selectedOrg, showQRGenerator]);
+
+  useEffect(() => {
+    // Listen for connection lost events
+    const handleConnectionLost = (event: CustomEvent) => {
+      console.log('Connection lost event received:', event.detail);
+      setConnectionLost(true);
+      setWebRTCStatus('disconnected');
+    };
+
+    window.addEventListener('webrtc-connection-lost', handleConnectionLost as EventListener);
+
+    // Periodic status check
+    const statusInterval = setInterval(() => {
+      if (selectedOrg) {
+        const status = webRTCService.getConnectionStatus();
+        const reconnecting = webRTCService.isCurrentlyReconnecting();
+        const attempts = webRTCService.getReconnectAttempts();
+        
+        setWebRTCStatus(status);
+        setIsReconnecting(reconnecting);
+        setReconnectAttempts(attempts);
+        
+        if (status === 'connected') {
+          setConnectionLost(false);
+        }
+      }
+    }, 2000);
+
+    return () => {
+      window.removeEventListener('webrtc-connection-lost', handleConnectionLost as EventListener);
+      clearInterval(statusInterval);
+    };
+  }, [selectedOrg]);
 
   const checkWebRTCStatus = () => {
     const status = webRTCService.getConnectionStatus();
@@ -74,12 +110,16 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
     setWebRTCStatus('disconnected');
     setConnectedPeers([]);
     setMembers([]);
+    setConnectionLost(false);
+    setIsReconnecting(false);
+    setReconnectAttempts(0);
   };
 
   const handleConnectionEstablished = (organizationId: string) => {
     console.log('WebRTC server established for org:', organizationId);
     setShowQRGenerator(false);
     setWebRTCStatus('connected');
+    setConnectionLost(false);
     setupWebRTCListeners();
   };
 
@@ -103,6 +143,12 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
       setConnectedPeers(currentPeers);
       setIsRefreshing(false);
     }, 1000);
+  };
+
+  const forceReconnect = async () => {
+    console.log('Forcing reconnection...');
+    setConnectionLost(false);
+    await webRTCService.forceReconnect();
   };
 
   const updateMemberLocation = (userId: string, locationData: any) => {
@@ -194,16 +240,23 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
               <span className={`text-sm font-medium ${
                 webRTCStatus === 'connected' ? 'text-green-600' : 'text-red-600'
               }`}>
-                {webRTCStatus === 'connected' ? 'Server Active' : 'Server Offline'}
+                {webRTCStatus === 'connected' ? 'Server Active' : 
+                 isReconnecting ? `Reconnecting (${reconnectAttempts}/5)` : 'Server Offline'}
               </span>
             </div>
           </div>
         </div>
         <div className="flex space-x-2">
-          {selectedOrg && webRTCStatus === 'disconnected' && (
+          {selectedOrg && webRTCStatus === 'disconnected' && !isReconnecting && (
             <Button onClick={() => setShowQRGenerator(true)}>
               <QrCode className="w-4 h-4 mr-2" />
               Start Server
+            </Button>
+          )}
+          {connectionLost && (
+            <Button onClick={forceReconnect} variant="outline" className="border-orange-500 text-orange-600">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Force Reconnect
             </Button>
           )}
           <Button 
@@ -216,6 +269,46 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
           </Button>
         </div>
       </div>
+
+      {/* Connection Status Alert */}
+      {connectionLost && (
+        <Card className="border-orange-200 bg-orange-50">
+          <CardContent className="p-4">
+            <div className="flex items-start space-x-3">
+              <AlertCircle className="w-5 h-5 text-orange-600 mt-0.5" />
+              <div>
+                <h4 className="font-medium text-orange-900">Connection Lost</h4>
+                <p className="text-sm text-orange-700 mt-1">
+                  Network connection was lost after {reconnectAttempts} reconnection attempts. 
+                  This can happen when both devices change IP addresses simultaneously.
+                </p>
+                <Button 
+                  onClick={forceReconnect} 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-2 border-orange-500 text-orange-600"
+                >
+                  Try Reconnecting
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Reconnecting Status */}
+      {isReconnecting && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-3">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              <p className="text-sm text-blue-700">
+                Reconnecting to peers... Attempt {reconnectAttempts} of 5
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid md:grid-cols-2 gap-4">
         <div>
@@ -255,7 +348,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
         </div>
       </div>
 
-      {selectedOrg && webRTCStatus === 'disconnected' && (
+      {selectedOrg && webRTCStatus === 'disconnected' && !isReconnecting && (
         <Card>
           <CardContent className="text-center py-12">
             <QrCode className="w-12 h-12 text-blue-400 mx-auto mb-4" />
