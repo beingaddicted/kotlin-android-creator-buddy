@@ -17,6 +17,15 @@ class LocationService {
   private watchId: string | null = null;
   private isTracking = false;
   private locationData: LocationData[] = [];
+  private currentUserId: string | null = null;
+  private currentOrgId: string | null = null;
+
+  constructor() {
+    // Listen for location requests from WebRTC server
+    window.addEventListener('webrtc-location-requested', () => {
+      this.sendCurrentLocationToServer();
+    });
+  }
 
   async requestPermissions() {
     const permissions = await Geolocation.requestPermissions();
@@ -32,6 +41,8 @@ class LocationService {
     }
 
     this.isTracking = true;
+    this.currentUserId = userId;
+    this.currentOrgId = organizationId;
     console.log('Starting location tracking for user:', userId);
 
     // Listen for app state changes
@@ -67,19 +78,36 @@ class LocationService {
           };
 
           this.saveLocationLocally(locationData);
-          
-          // Send location update via WebRTC
-          webRTCService.sendLocationUpdate({
-            latitude: locationData.latitude,
-            longitude: locationData.longitude,
-            timestamp: locationData.timestamp,
-            accuracy: locationData.accuracy
-          });
-          
-          console.log('Location updated and sent via WebRTC:', locationData);
+          console.log('Location updated:', locationData);
         }
       }
     );
+  }
+
+  private async sendCurrentLocationToServer() {
+    if (!this.isTracking || !this.currentUserId || !this.currentOrgId) return;
+
+    try {
+      const position = await Geolocation.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 5000,
+      });
+
+      const locationData = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        timestamp: Date.now(),
+        accuracy: position.coords.accuracy,
+        userId: this.currentUserId
+      };
+
+      // Send location update via WebRTC to server
+      webRTCService.sendLocationUpdate(locationData);
+      
+      console.log('Current location sent to server:', locationData);
+    } catch (error) {
+      console.error('Failed to get current location for server:', error);
+    }
   }
 
   async stopTracking() {

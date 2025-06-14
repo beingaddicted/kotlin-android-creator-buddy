@@ -1,6 +1,6 @@
 
 export interface WebRTCMessage {
-  type: 'location' | 'offer' | 'answer' | 'ice-candidate' | 'join-org' | 'member-status';
+  type: 'location' | 'join-org' | 'member-status' | 'location-request';
   data: any;
   userId?: string;
   organizationId?: string;
@@ -15,22 +15,15 @@ export interface PeerConnection {
   dataChannel?: RTCDataChannel;
   status: 'connecting' | 'connected' | 'disconnected';
   lastSeen: number;
+  ipAddress?: string;
 }
 
-export interface WebRTCOffer {
-  type: 'webrtc_offer';
+export interface WebRTCServerOffer {
+  type: 'webrtc_server_offer';
   offer: RTCSessionDescriptionInit;
   adminId: string;
   organizationId: string;
   organizationName: string;
   timestamp: number;
-}
-
-export interface WebRTCAnswer {
-  type: 'webrtc_answer';
-  answer: RTCSessionDescriptionInit;
-  userId: string;
-  userName: string;
-  organizationId: string;
-  timestamp: number;
+  serverIp?: string;
 }

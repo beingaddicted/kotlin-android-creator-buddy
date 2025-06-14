@@ -77,10 +77,32 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
   };
 
   const handleConnectionEstablished = (organizationId: string) => {
-    console.log('WebRTC connection established for org:', organizationId);
+    console.log('WebRTC server established for org:', organizationId);
     setShowQRGenerator(false);
     setWebRTCStatus('connected');
     setupWebRTCListeners();
+  };
+
+  const requestLocationFromMember = (memberId: string) => {
+    webRTCService.requestLocationFromClient(memberId);
+  };
+
+  const requestLocationFromAllMembers = () => {
+    webRTCService.requestLocationFromAllClients();
+  };
+
+  const refreshConnections = async () => {
+    setIsRefreshing(true);
+    
+    // Request fresh location data from all connected clients
+    requestLocationFromAllMembers();
+    
+    setTimeout(() => {
+      console.log('Refreshing WebRTC connections...');
+      const currentPeers = webRTCService.getConnectedPeers();
+      setConnectedPeers(currentPeers);
+      setIsRefreshing(false);
+    }, 1000);
   };
 
   const updateMemberLocation = (userId: string, locationData: any) => {
@@ -133,17 +155,6 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
     });
   };
 
-  const refreshConnections = async () => {
-    setIsRefreshing(true);
-    
-    setTimeout(() => {
-      console.log('Refreshing WebRTC connections...');
-      const currentPeers = webRTCService.getConnectedPeers();
-      setConnectedPeers(currentPeers);
-      setIsRefreshing(false);
-    }, 1000);
-  };
-
   const formatTimestamp = (timestamp: number) => {
     const now = Date.now();
     const diff = now - timestamp;
@@ -173,7 +184,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
         <div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Live Member Tracking</h2>
           <div className="flex items-center space-x-4">
-            <p className="text-gray-600">Monitor real-time locations via WebRTC P2P connections</p>
+            <p className="text-gray-600">Monitor real-time locations via WebRTC P2P server</p>
             <div className="flex items-center space-x-1">
               {webRTCStatus === 'connected' ? (
                 <Wifi className="w-4 h-4 text-green-600" />
@@ -183,7 +194,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
               <span className={`text-sm font-medium ${
                 webRTCStatus === 'connected' ? 'text-green-600' : 'text-red-600'
               }`}>
-                {webRTCStatus.charAt(0).toUpperCase() + webRTCStatus.slice(1)}
+                {webRTCStatus === 'connected' ? 'Server Active' : 'Server Offline'}
               </span>
             </div>
           </div>
@@ -192,7 +203,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
           {selectedOrg && webRTCStatus === 'disconnected' && (
             <Button onClick={() => setShowQRGenerator(true)}>
               <QrCode className="w-4 h-4 mr-2" />
-              Setup Connection
+              Start Server
             </Button>
           )}
           <Button 
@@ -201,7 +212,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
             variant="outline"
           >
             <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
+            Request Locations
           </Button>
         </div>
       </div>

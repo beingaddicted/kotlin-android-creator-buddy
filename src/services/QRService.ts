@@ -1,6 +1,5 @@
-
 import QRCode from 'qrcode';
-import { WebRTCOffer, WebRTCAnswer } from './WebRTCService';
+import { WebRTCOffer, WebRTCAnswer, WebRTCServerOffer } from './WebRTCService';
 
 export interface QRData {
   type: 'organization_invite';
@@ -77,7 +76,26 @@ class QRService {
     }
   }
 
-  parseQRData(qrString: string): QRData | WebRTCOffer | WebRTCAnswer | null {
+  async generateWebRTCServerOfferQR(offerData: WebRTCServerOffer): Promise<string> {
+    try {
+      const qrCodeDataURL = await QRCode.toDataURL(JSON.stringify(offerData), {
+        width: 400,
+        margin: 2,
+        color: {
+          dark: '#1e40af',
+          light: '#ffffff'
+        },
+        errorCorrectionLevel: 'M'
+      });
+
+      return qrCodeDataURL;
+    } catch (error) {
+      console.error('WebRTC Server Offer QR generation failed:', error);
+      throw new Error('Failed to generate WebRTC server offer QR code');
+    }
+  }
+
+  parseQRData(qrString: string): QRData | WebRTCOffer | WebRTCAnswer | WebRTCServerOffer | null {
     try {
       const data = JSON.parse(qrString);
       
@@ -91,6 +109,10 @@ class QRService {
 
       if (data.type === 'webrtc_answer' && data.answer && data.userId) {
         return data as WebRTCAnswer;
+      }
+
+      if (data.type === 'webrtc_server_offer' && data.offer && data.organizationId) {
+        return data as WebRTCServerOffer;
       }
       
       return null;

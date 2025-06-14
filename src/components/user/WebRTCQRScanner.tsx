@@ -2,23 +2,21 @@
 import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { QrCode, Camera, X, Download } from "lucide-react";
+import { QrCode, Camera, X, CheckCircle } from "lucide-react";
 import QrScanner from "qr-scanner";
 import { qrService } from "@/services/QRService";
-import { webRTCService, WebRTCOffer, WebRTCAnswer } from "@/services/WebRTCService";
+import { webRTCService, WebRTCServerOffer } from "@/services/WebRTCService";
 
 interface WebRTCQRScannerProps {
-  onConnectionEstablished: (offerData: WebRTCOffer) => void;
+  onConnectionEstablished: (offerData: WebRTCServerOffer) => void;
   onClose: () => void;
 }
 
 export const WebRTCQRScanner = ({ onConnectionEstablished, onClose }: WebRTCQRScannerProps) => {
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string>("");
-  const [step, setStep] = useState<'scanning' | 'generating-answer' | 'show-answer'>('scanning');
-  const [scannedOffer, setScannedOffer] = useState<WebRTCOffer | null>(null);
-  const [answerQR, setAnswerQR] = useState<string>("");
-  const [generatedAnswer, setGeneratedAnswer] = useState<WebRTCAnswer | null>(null);
+  const [step, setStep] = useState<'scanning' | 'connecting' | 'connected'>('scanning');
+  const [scannedOffer, setScannedOffer] = useState<WebRTCServerOffer | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerRef = useRef<QrScanner | null>(null);
 
@@ -78,19 +76,19 @@ export const WebRTCQRScanner = ({ onConnectionEstablished, onClose }: WebRTCQRSc
   const handleQRResult = async (qrString: string) => {
     const qrData = qrService.parseQRData(qrString);
     
-    if (qrData && 'type' in qrData && qrData.type === 'webrtc_offer') {
-      const offerData = qrData as WebRTCOffer;
+    if (qrData && 'type' in qrData && qrData.type === 'webrtc_server_offer') {
+      const offerData = qrData as WebRTCServerOffer;
       stopScanning();
       setScannedOffer(offerData);
-      await generateAnswer(offerData);
+      await connectToServer(offerData);
     } else {
-      setError("Invalid WebRTC connection QR code. Please scan the connection QR from admin.");
+      setError("Invalid WebRTC server QR code. Please scan the server QR from admin.");
     }
   };
 
-  const generateAnswer = async (offerData: WebRTCOffer) => {
+  const connectToServer = async (offerData: WebRTCServerOffer) => {
     try {
-      setStep('generating-answer');
+      setStep('connecting');
       
       // Get user data from localStorage or prompt
       const userRegistration = localStorage.getItem('userRegistration');
@@ -106,34 +104,17 @@ export const WebRTCQRScanner = ({ onConnectionEstablished, onClose }: WebRTCQRSc
         userName = prompt('Enter your name:') || 'Anonymous User';
       }
 
-      // Create WebRTC answer
-      const answerData = await webRTCService.processOfferAndCreateAnswer(
-        offerData, 
-        userId, 
-        userName
-      );
-      setGeneratedAnswer(answerData);
-
-      // Generate QR code for the answer
-      const answerQRDataURL = await qrService.generateWebRTCAnswerQR(answerData);
-      setAnswerQR(answerQRDataURL);
-      setStep('show-answer');
+      // Connect to WebRTC server
+      await webRTCService.connectToServer(offerData, userId, userName);
+      
+      setStep('connected');
 
       // Notify parent about connection establishment
       onConnectionEstablished(offerData);
     } catch (error) {
-      console.error('Failed to generate answer:', error);
-      setError('Failed to process connection. Please try again.');
+      console.error('Failed to connect to server:', error);
+      setError('Failed to connect to server. Please try again.');
     }
-  };
-
-  const downloadAnswerQR = () => {
-    if (!answerQR) return;
-
-    const link = document.createElement('a');
-    link.download = 'webrtc-answer.png';
-    link.href = answerQR;
-    link.click();
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -155,9 +136,9 @@ export const WebRTCQRScanner = ({ onConnectionEstablished, onClose }: WebRTCQRSc
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center">
           <QrCode className="w-5 h-5 mr-2" />
-          {step === 'scanning' ? 'Scan Connection QR' :
-           step === 'generating-answer' ? 'Establishing Connection' :
-           'Show Answer QR to Admin'}
+          {step === 'scanning' ? 'Scan Server QR' :
+           step === 'connecting' ? 'Connecting to Server' :
+           'Connected to Server'}
         </CardTitle>
         <Button variant="ghost" size="sm" onClick={onClose}>
           <X className="w-4 h-4" />
@@ -171,7 +152,7 @@ export const WebRTCQRScanner = ({ onConnectionEstablished, onClose }: WebRTCQRSc
                 <div className="w-full h-64 bg-gray-100 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center">
                   <div className="text-center">
                     <Camera className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500 mb-4">Scan the WebRTC connection QR from admin</p>
+                    <p className="text-gray-500 mb-4">Scan the WebRTC server QR from admin</p>
                     <Button onClick={startScanning}>
                       <Camera className="w-4 h-4 mr-2" />
                       Start Camera
@@ -214,59 +195,46 @@ export const WebRTCQRScanner = ({ onConnectionEstablished, onClose }: WebRTCQRSc
                 </Button>
 
                 <p className="text-sm text-center text-gray-500">
-                  Point camera at the admin's connection QR code
+                  Point camera at the admin's server QR code
                 </p>
               </div>
             )}
           </>
         )}
 
-        {step === 'generating-answer' && (
+        {step === 'connecting' && (
           <div className="text-center py-8">
             <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Establishing secure connection...</p>
+            <p className="text-gray-600">Connecting to server...</p>
             {scannedOffer && (
               <p className="text-sm text-gray-500 mt-2">
-                Connecting to {scannedOffer.organizationName}
+                Server: {scannedOffer.organizationName}
               </p>
             )}
           </div>
         )}
 
-        {step === 'show-answer' && (
+        {step === 'connected' && (
           <div className="space-y-4">
-            <div className="bg-green-50 p-4 rounded-lg">
+            <div className="bg-green-50 p-4 rounded-lg text-center">
+              <CheckCircle className="w-12 h-12 text-green-600 mx-auto mb-2" />
               <p className="text-sm text-green-800 mb-2">
-                <strong>Connection established!</strong>
+                <strong>Successfully connected!</strong>
               </p>
               <p className="text-sm text-green-700">
-                Show this QR code to the admin to complete the connection.
+                You are now connected directly to the admin's device. They can request your location anytime.
               </p>
             </div>
 
-            <div className="w-80 h-80 mx-auto bg-white border rounded-lg flex items-center justify-center p-4">
-              <img 
-                src={answerQR} 
-                alt="WebRTC Answer QR"
-                className="w-full h-full object-contain"
-              />
-            </div>
+            <Button onClick={onClose} className="w-full">
+              Start Location Sharing
+            </Button>
 
-            <div className="flex space-x-2">
-              <Button variant="outline" onClick={downloadAnswerQR} className="flex-1">
-                <Download className="w-4 h-4 mr-2" />
-                Download
-              </Button>
-              <Button onClick={onClose} className="flex-1">
-                Done
-              </Button>
-            </div>
-
-            {generatedAnswer && (
+            {scannedOffer && (
               <div className="bg-blue-50 p-3 rounded-lg">
                 <p className="text-xs text-blue-700">
-                  User: {generatedAnswer.userName} | 
-                  Org: {scannedOffer?.organizationName}
+                  Connected to: {scannedOffer.organizationName} | 
+                  Server IP: {scannedOffer.serverIp}
                 </p>
               </div>
             )}

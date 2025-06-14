@@ -3,9 +3,9 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { QrCode, Wifi, Download, RotateCcw } from "lucide-react";
+import { QrCode, Download, ArrowLeft, Wifi } from "lucide-react";
 import { qrService } from "@/services/QRService";
-import { webRTCService, WebRTCOffer, WebRTCAnswer } from "@/services/WebRTCService";
+import { webRTCService, WebRTCServerOffer } from "@/services/WebRTCService";
 
 interface Organization {
   id: string;
@@ -21,13 +21,11 @@ interface WebRTCQRGeneratorProps {
 
 export const WebRTCQRGenerator = ({ organizations, onConnectionEstablished }: WebRTCQRGeneratorProps) => {
   const [selectedOrg, setSelectedOrg] = useState<string>("");
-  const [offerQR, setOfferQR] = useState<string>("");
-  const [currentOffer, setCurrentOffer] = useState<WebRTCOffer | null>(null);
+  const [qrCodeDataURL, setQrCodeDataURL] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isWaitingForAnswer, setIsWaitingForAnswer] = useState(false);
-  const [step, setStep] = useState<'select' | 'offer-generated' | 'scanning-answer'>('select');
+  const [serverOffer, setServerOffer] = useState<WebRTCServerOffer | null>(null);
 
-  const generateOfferQR = async () => {
+  const generateServerQR = async () => {
     if (!selectedOrg) return;
 
     setIsGenerating(true);
@@ -35,186 +33,116 @@ export const WebRTCQRGenerator = ({ organizations, onConnectionEstablished }: We
       const org = organizations.find(o => o.id === selectedOrg);
       if (!org) return;
 
-      // Create WebRTC offer
-      const offerData = await webRTCService.createOfferQR(selectedOrg, org.name);
-      setCurrentOffer(offerData);
+      // Create WebRTC server offer
+      const offerData = await webRTCService.createServerOffer(selectedOrg, org.name);
+      setServerOffer(offerData);
 
-      // Generate QR code for the offer
-      const qrDataURL = await qrService.generateWebRTCOfferQR(offerData);
-      setOfferQR(qrDataURL);
-      setStep('offer-generated');
+      // Generate QR code for the server offer
+      const qrDataURL = await qrService.generateWebRTCServerOfferQR(offerData);
+      setQrCodeDataURL(qrDataURL);
+
+      // Notify parent that server is ready
+      onConnectionEstablished(selectedOrg);
     } catch (error) {
-      console.error('Failed to generate WebRTC offer QR:', error);
+      console.error('Failed to generate server QR code:', error);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleAnswerScanned = async (answerData: WebRTCAnswer) => {
-    if (!currentOffer) return;
-
-    try {
-      setIsWaitingForAnswer(true);
-      
-      // Process the answer to complete WebRTC connection
-      await webRTCService.processAnswer(answerData);
-      
-      console.log('WebRTC connection established with:', answerData.userName);
-      
-      // Notify parent component
-      onConnectionEstablished(selectedOrg);
-      
-      // Reset state
-      resetState();
-    } catch (error) {
-      console.error('Failed to process WebRTC answer:', error);
-    } finally {
-      setIsWaitingForAnswer(false);
-    }
-  };
-
-  const resetState = () => {
-    setOfferQR("");
-    setCurrentOffer(null);
-    setStep('select');
-    setSelectedOrg("");
-  };
-
   const downloadQR = () => {
-    if (!offerQR) return;
+    if (!qrCodeDataURL) return;
 
     const link = document.createElement('a');
-    link.download = `${organizations.find(o => o.id === selectedOrg)?.name || 'organization'}-webrtc-offer.png`;
-    link.href = offerQR;
+    link.download = `webrtc-server-${selectedOrg}.png`;
+    link.href = qrCodeDataURL;
     link.click();
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <div className="text-center">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">WebRTC P2P Connection</h2>
-        <p className="text-gray-600">Generate connection QR for direct peer-to-peer location sharing</p>
-      </div>
+    <Card className="w-full max-w-2xl mx-auto">
+      <CardHeader>
+        <CardTitle className="flex items-center">
+          <Wifi className="w-5 h-5 mr-2" />
+          WebRTC Server Setup
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-2 block">
+              Select Organization
+            </label>
+            <Select value={selectedOrg} onValueChange={setSelectedOrg}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose organization to host" />
+              </SelectTrigger>
+              <SelectContent>
+                {organizations.map((org) => (
+                  <SelectItem key={org.id} value={org.id}>
+                    {org.name} ({org.memberCount} members)
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-      {step === 'select' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Setup P2P Connection</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm font-medium text-gray-700 mb-2 block">
-                Select Organization
-              </label>
-              <Select value={selectedOrg} onValueChange={setSelectedOrg}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose an organization" />
-                </SelectTrigger>
-                <SelectContent>
-                  {organizations.map((org) => (
-                    <SelectItem key={org.id} value={org.id}>
-                      {org.name} ({org.memberCount} members)
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <Button 
+            onClick={generateServerQR} 
+            disabled={!selectedOrg || isGenerating}
+            className="w-full"
+          >
+            <QrCode className="w-4 h-4 mr-2" />
+            {isGenerating ? 'Starting Server...' : 'Start WebRTC Server'}
+          </Button>
+        </div>
+
+        {qrCodeDataURL && (
+          <div className="space-y-4">
+            <div className="bg-green-50 p-4 rounded-lg">
+              <h3 className="font-semibold text-green-900 mb-2">Server Active!</h3>
+              <p className="text-sm text-green-700">
+                Your device is now acting as a WebRTC server. Members can scan this QR code to connect directly to you.
+              </p>
             </div>
 
-            <Button 
-              onClick={generateOfferQR} 
-              disabled={!selectedOrg || isGenerating}
-              className="w-full"
-            >
-              <Wifi className="w-4 h-4 mr-2" />
-              {isGenerating ? 'Creating Connection...' : 'Generate Connection QR'}
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {step === 'offer-generated' && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Step 1: Share Connection QR</span>
-              <Button variant="ghost" size="sm" onClick={resetState}>
-                <RotateCcw className="w-4 h-4" />
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-center space-y-4">
             <div className="w-80 h-80 mx-auto bg-white border rounded-lg flex items-center justify-center p-4">
               <img 
-                src={offerQR} 
-                alt="WebRTC Connection QR"
+                src={qrCodeDataURL} 
+                alt="WebRTC Server QR"
                 className="w-full h-full object-contain"
               />
             </div>
 
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <p className="text-sm text-blue-800 mb-2">
-                <strong>Instructions for members:</strong>
-              </p>
-              <ol className="text-sm text-blue-700 space-y-1 text-left">
-                <li>1. Open the member app and scan this QR code</li>
-                <li>2. Register with your details</li>
-                <li>3. The app will generate an answer QR code</li>
-                <li>4. Show the answer QR to the admin to complete connection</li>
-              </ol>
-            </div>
-
             <div className="flex space-x-2">
-              <Button variant="outline" onClick={downloadQR}>
+              <Button variant="outline" onClick={downloadQR} className="flex-1">
                 <Download className="w-4 h-4 mr-2" />
                 Download QR
               </Button>
-              <Button onClick={() => setStep('scanning-answer')}>
-                <QrCode className="w-4 h-4 mr-2" />
-                Ready to Scan Answer
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {step === 'scanning-answer' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Step 2: Scan Member's Answer QR</CardTitle>
-          </CardHeader>
-          <CardContent className="text-center space-y-4">
-            <div className="bg-green-50 p-4 rounded-lg">
-              <p className="text-sm text-green-800">
-                <strong>Waiting for member's answer QR code...</strong>
-              </p>
-              <p className="text-sm text-green-700 mt-1">
-                Ask the member to show you their generated answer QR code, then scan it to complete the connection.
-              </p>
             </div>
 
-            <div className="w-64 h-64 mx-auto bg-gray-100 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center">
-              <div className="text-center">
-                <QrCode className="w-16 h-16 text-gray-400 mx-auto mb-2" />
-                <p className="text-gray-500 text-sm">Scan member's answer QR</p>
+            {serverOffer && (
+              <div className="bg-blue-50 p-3 rounded-lg">
+                <p className="text-xs text-blue-700">
+                  Server: {serverOffer.organizationName} | 
+                  IP: {serverOffer.serverIp} | 
+                  Started: {new Date(serverOffer.timestamp).toLocaleTimeString()}
+                </p>
               </div>
+            )}
+
+            <div className="bg-yellow-50 p-4 rounded-lg">
+              <h4 className="font-semibold text-yellow-900 mb-2">Instructions for Members:</h4>
+              <ol className="text-sm text-yellow-800 space-y-1">
+                <li>1. Open the member app and scan this QR code</li>
+                <li>2. They will automatically connect to your device</li>
+                <li>3. You can request their location anytime from the tracking dashboard</li>
+                <li>4. Connection persists even with IP changes</li>
+              </ol>
             </div>
-
-            <Button variant="outline" onClick={() => setStep('offer-generated')}>
-              Back to Share QR
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {organizations.length === 0 && (
-        <Card>
-          <CardContent className="text-center py-12">
-            <Wifi className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No organizations available</h3>
-            <p className="text-gray-500">Create an organization first to setup P2P connections.</p>
-          </CardContent>
-        </Card>
-      )}
-    </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 };
