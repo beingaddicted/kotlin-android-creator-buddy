@@ -1,20 +1,19 @@
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { ConnectionManager } from './webrtc/ConnectionManager';
 import { SignalingMessage } from './webrtc/SignalingService';
+import { IPChangeManager, IPChangeEvent } from './webrtc/IPChangeManager';
+import { ReconnectionManager } from './webrtc/ReconnectionManager';
 
 class WebRTCService {
   private localConnection: RTCPeerConnection | null = null;
   private connectionManager = new ConnectionManager();
+  private ipChangeManager = new IPChangeManager();
+  private reconnectionManager = new ReconnectionManager();
   private isAdmin = false;
   private userId: string | null = null;
   private organizationId: string | null = null;
   private pendingIceCandidates: RTCIceCandidate[] = [];
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectInterval: NodeJS.Timeout | null = null;
   private lastServerOffer: WebRTCServerOffer | null = null;
-  private isReconnecting = false;
-  private currentLocalIP: string | null = null;
   
   private rtcConfiguration: RTCConfiguration = {
     iceServers: [
@@ -32,6 +31,7 @@ class WebRTCService {
     this.organizationId = organizationId;
     this.userId = `admin-${organizationId}-${Date.now()}`;
     this.connectionManager.setAsServer(true);
+    this.reconnectionManager.setAsAdmin(true);
     
     console.log('WebRTC: Creating server offer for organization:', organizationId);
     
@@ -45,12 +45,10 @@ class WebRTCService {
     
     this.setupConnectionEventHandlers(connection);
     this.setupSignalingHandler();
+    this.setupIPChangeHandling();
 
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
-
-    // Get and store current IP
-    this.currentLocalIP = await this.getLocalIP();
 
     const serverOffer: WebRTCServerOffer = {
       type: 'webrtc_server_offer',
@@ -59,7 +57,7 @@ class WebRTCService {
       organizationId,
       organizationName,
       timestamp: Date.now(),
-      serverIp: this.currentLocalIP
+      serverIp: this.ipChangeManager.getCurrentIPSync()
     };
 
     this.lastServerOffer = serverOffer;
@@ -71,6 +69,7 @@ class WebRTCService {
     this.userId = userId;
     this.organizationId = offerData.organizationId;
     this.connectionManager.setAsServer(false);
+    this.reconnectionManager.setAsAdmin(false);
     this.lastServerOffer = offerData;
     
     console.log('WebRTC: Connecting to server');
@@ -84,13 +83,11 @@ class WebRTCService {
     
     this.setupConnectionEventHandlers(connection);
     this.setupSignalingHandler();
+    this.setupIPChangeHandling();
 
     await connection.setRemoteDescription(offerData.offer);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
-    
-    // Get current IP
-    this.currentLocalIP = await this.getLocalIP();
     
     // Add ICE candidates
     for (const candidate of this.pendingIceCandidates) {
@@ -113,6 +110,72 @@ class WebRTCService {
     });
   }
 
+  private setupIPChangeHandling() {
+    // Start IP monitoring
+    this.ipChangeManager.startMonitoring();
+    
+    // Handle IP change events
+    this.ipChangeManager.onIPChange((event: IPChangeEvent) => {
+      this.handleIPChangeEvent(event);
+    });
+    
+    // Handle reconnection state changes
+    this.reconnectionManager.onReconnectionStateChange((peerId, state) => {
+      console.log(`Reconnection state changed for ${peerId}: ${state}`);
+      
+      if (state === 'success') {
+        this.ipChangeManager.setConnectionInstability(false);
+      } else if (state === 'attempting') {
+        this.ipChangeManager.setConnectionInstability(true);
+      } else if (state === 'failed') {
+        this.notifyConnectionLost(peerId);
+      }
+    });
+  }
+
+  private async handleIPChangeEvent(event: IPChangeEvent) {
+    console.log('Handling IP change event:', event);
+    
+    if (event.source === 'local') {
+      // Our IP changed
+      await this.handleLocalIPChange(event);
+    } else if (event.source === 'peer' && event.peerId) {
+      // Peer's IP changed
+      await this.handlePeerIPChange(event.peerId, event.oldIP, event.newIP);
+    }
+  }
+
+  private async handleLocalIPChange(event: IPChangeEvent) {
+    console.log('Local IP changed from', event.oldIP, 'to', event.newIP);
+    
+    // Notify all peers about our IP change
+    this.connectionManager.notifyIpChange(event.newIP);
+    
+    if (this.isAdmin) {
+      // Admin sends new offers to all clients
+      await this.sendUpdatedOfferToAllClients(event.newIP);
+    } else {
+      // Client waits for new offer from admin or initiates reconnection if needed
+      await this.handleClientIPChange();
+    }
+  }
+
+  private async handlePeerIPChange(peerId: string, oldIP: string, newIP: string) {
+    console.log(`Peer ${peerId} IP changed from ${oldIP} to ${newIP}`);
+    
+    if (this.isAdmin && this.reconnectionManager.shouldInitiateReconnection(peerId, 'ip-change')) {
+      // Admin initiates reconnection for the client
+      const attemptNumber = this.reconnectionManager.startReconnectionAttempt(peerId, 'ip-change');
+      
+      // Add delay before attempting
+      const delay = this.reconnectionManager.getDelayForAttempt(attemptNumber);
+      
+      setTimeout(async () => {
+        await this.sendUpdatedOfferToClient(peerId);
+      }, delay);
+    }
+  }
+
   private setupSignalingHandler() {
     this.connectionManager.onSignalingMessage((message, fromPeerId) => {
       this.handleSignalingMessage(message, fromPeerId);
@@ -124,22 +187,20 @@ class WebRTCService {
 
     switch (message.type) {
       case 'new-offer':
-        // Client receives new offer from admin
         if (!this.isAdmin) {
           await this.handleNewOffer(message.data, fromPeerId);
         }
         break;
 
       case 'new-answer':
-        // Admin receives new answer from client
         if (this.isAdmin && this.localConnection) {
           await this.localConnection.setRemoteDescription(message.data);
-          console.log('Applied new answer from client');
+          this.reconnectionManager.markReconnectionSuccess(fromPeerId);
+          console.log('Applied new answer from client and marked reconnection success');
         }
         break;
 
       case 'ice-candidate':
-        // Both can receive ICE candidates
         if (this.localConnection) {
           try {
             await this.localConnection.addIceCandidate(message.data);
@@ -151,11 +212,7 @@ class WebRTCService {
         break;
 
       case 'ip-changed':
-        // Handle IP change notification
-        console.log('Peer IP changed:', message.data.newIp);
-        if (!this.isReconnecting) {
-          this.handlePeerIpChange(fromPeerId, message.data.newIp);
-        }
+        this.ipChangeManager.handlePeerIPChange(fromPeerId, 'unknown', message.data.newIp);
         break;
     }
   }
@@ -166,17 +223,13 @@ class WebRTCService {
     try {
       console.log('Applying new offer from admin');
       
-      // Update stored server offer
       this.lastServerOffer = newOffer;
       
-      // Set new remote description
       await this.localConnection.setRemoteDescription(newOffer.offer);
       
-      // Create and send new answer
       const answer = await this.localConnection.createAnswer();
       await this.localConnection.setLocalDescription(answer);
       
-      // Send answer back through signaling
       this.connectionManager.sendNewAnswer(fromPeerId, answer);
       
       console.log('Sent new answer to admin');
@@ -185,43 +238,72 @@ class WebRTCService {
     }
   }
 
-  private async handlePeerIpChange(peerId: string, newIp: string) {
-    console.log('Handling peer IP change for:', peerId, 'new IP:', newIp);
-    
-    // If we're the admin and client IP changed, we might need to restart ICE
-    if (this.isAdmin) {
-      await this.handleClientIpChange(peerId);
-    } else {
-      // If we're client and admin IP changed, admin should send new offer
-      console.log('Admin IP changed, waiting for new offer...');
-    }
-  }
-
-  private async handleClientIpChange(clientId: string) {
-    if (!this.localConnection) return;
+  private async sendUpdatedOfferToAllClients(newIP: string) {
+    if (!this.localConnection || !this.lastServerOffer) return;
 
     try {
-      console.log('Client IP changed, performing ICE restart');
+      console.log('Sending updated offer to all clients due to IP change to:', newIP);
       
-      // Perform ICE restart
       const offer = await this.localConnection.createOffer({ iceRestart: true });
       await this.localConnection.setLocalDescription(offer);
       
-      // Send new offer to client
-      if (this.lastServerOffer) {
-        const newServerOffer: WebRTCServerOffer = {
-          ...this.lastServerOffer,
-          offer,
-          timestamp: Date.now(),
-          serverIp: this.currentLocalIP || 'unknown'
-        };
-        
-        this.connectionManager.sendNewOffer(clientId, newServerOffer);
-        console.log('Sent new offer to client after IP change');
-      }
+      const newServerOffer: WebRTCServerOffer = {
+        ...this.lastServerOffer,
+        offer,
+        timestamp: Date.now(),
+        serverIp: newIP
+      };
+      
+      this.lastServerOffer = newServerOffer;
+      
+      const connectedPeers = this.connectionManager.getConnectedPeers();
+      connectedPeers.forEach(peer => {
+        if (this.reconnectionManager.shouldInitiateReconnection(peer.id, 'ip-change')) {
+          this.reconnectionManager.startReconnectionAttempt(peer.id, 'ip-change');
+          this.connectionManager.sendNewOffer(peer.id, newServerOffer);
+        }
+      });
+      
     } catch (error) {
-      console.error('Failed to handle client IP change:', error);
+      console.error('Failed to send updated offer to clients:', error);
     }
+  }
+
+  private async sendUpdatedOfferToClient(clientId: string) {
+    if (!this.localConnection || !this.lastServerOffer) return;
+
+    try {
+      console.log('Sending updated offer to client:', clientId);
+      
+      const offer = await this.localConnection.createOffer({ iceRestart: true });
+      await this.localConnection.setLocalDescription(offer);
+      
+      const newServerOffer: WebRTCServerOffer = {
+        ...this.lastServerOffer,
+        offer,
+        timestamp: Date.now(),
+        serverIp: this.ipChangeManager.getCurrentIPSync()
+      };
+      
+      this.connectionManager.sendNewOffer(clientId, newServerOffer);
+      
+    } catch (error) {
+      console.error('Failed to send updated offer to client:', error);
+    }
+  }
+
+  private async handleClientIPChange() {
+    // Client detected own IP change - wait for admin's new offer or timeout and reconnect
+    console.log('Client IP changed, waiting for admin response...');
+    
+    // If no response from admin within 10 seconds, try to reconnect
+    setTimeout(() => {
+      const connectedPeers = this.connectionManager.getConnectedPeers();
+      if (connectedPeers.length === 0 && this.lastServerOffer) {
+        console.log('No admin response, attempting client-side reconnection...');
+        this.handleConnectionLoss();
+      }
+    }, 10000);
   }
 
   private setupConnectionEventHandlers(connection: RTCPeerConnection) {
@@ -230,7 +312,6 @@ class WebRTCService {
         this.pendingIceCandidates.push(event.candidate);
         console.log('ICE candidate generated, total:', this.pendingIceCandidates.length);
         
-        // Send ICE candidate to peers through signaling
         const peers = this.connectionManager.getConnectedPeers();
         peers.forEach(peer => {
           this.connectionManager.sendIceCandidate(peer.id, event.candidate!);
@@ -242,203 +323,86 @@ class WebRTCService {
       console.log('Connection state changed:', connection.connectionState);
       
       if (connection.connectionState === 'connected') {
-        this.reconnectAttempts = 0;
-        this.isReconnecting = false;
+        // Mark successful reconnection for all peers
+        const peers = this.connectionManager.getConnectedPeers();
+        peers.forEach(peer => {
+          this.reconnectionManager.markReconnectionSuccess(peer.id);
+        });
+        
+        this.ipChangeManager.setConnectionInstability(false);
         console.log('Successfully connected to peer');
-        
-        if (this.reconnectInterval) {
-          clearTimeout(this.reconnectInterval);
-          this.reconnectInterval = null;
-        }
-        
-        // Check if our IP changed
-        this.checkForIpChange();
       } else if (connection.connectionState === 'disconnected' || connection.connectionState === 'failed') {
-        if (!this.isReconnecting) {
-          console.log('Connection lost, attempting reconnection...');
-          this.handleReconnection();
-        }
+        this.handleConnectionLoss();
       }
     };
 
-    // Handle ICE connection state changes for better reconnection detection
     connection.oniceconnectionstatechange = () => {
       console.log('ICE connection state:', connection.iceConnectionState);
       
       if (connection.iceConnectionState === 'disconnected' || connection.iceConnectionState === 'failed') {
-        if (!this.isReconnecting && this.reconnectAttempts < this.maxReconnectAttempts) {
-          console.log('ICE connection lost, triggering reconnection...');
-          this.handleReconnection();
-        }
+        this.handleConnectionLoss();
       }
     };
   }
 
-  private async checkForIpChange() {
-    const newIp = await this.getLocalIP();
-    if (newIp !== this.currentLocalIP && newIp !== 'unknown') {
-      console.log('Local IP changed from', this.currentLocalIP, 'to', newIp);
-      this.currentLocalIP = newIp;
-      
-      // Notify peers about IP change
-      this.connectionManager.notifyIpChange(newIp);
-      
-      // If we're admin, send new offer to all clients
-      if (this.isAdmin) {
-        await this.sendUpdatedOfferToAllClients();
+  private handleConnectionLoss() {
+    const peers = this.connectionManager.getConnectedPeers();
+    
+    peers.forEach(peer => {
+      if (this.reconnectionManager.shouldInitiateReconnection(peer.id, 'connection-lost')) {
+        const attemptNumber = this.reconnectionManager.startReconnectionAttempt(peer.id, 'connection-lost');
+        
+        // Add delay before attempting
+        const delay = this.reconnectionManager.getDelayForAttempt(attemptNumber);
+        
+        setTimeout(async () => {
+          await this.attemptReconnection(peer.id);
+        }, delay);
       }
-    }
+    });
   }
 
-  private async sendUpdatedOfferToAllClients() {
-    if (!this.localConnection || !this.lastServerOffer) return;
-
+  private async attemptReconnection(peerId: string) {
     try {
-      console.log('Sending updated offer to all clients due to IP change');
+      console.log('Attempting reconnection for peer:', peerId);
       
-      // Create new offer
-      const offer = await this.localConnection.createOffer({ iceRestart: true });
-      await this.localConnection.setLocalDescription(offer);
-      
-      // Update server offer
-      const newServerOffer: WebRTCServerOffer = {
-        ...this.lastServerOffer,
-        offer,
-        timestamp: Date.now(),
-        serverIp: this.currentLocalIP || 'unknown'
-      };
-      
-      this.lastServerOffer = newServerOffer;
-      
-      // Send to all connected clients
-      const connectedPeers = this.connectionManager.getConnectedPeers();
-      connectedPeers.forEach(peer => {
-        this.connectionManager.sendNewOffer(peer.id, newServerOffer);
-      });
-      
-    } catch (error) {
-      console.error('Failed to send updated offer to clients:', error);
-    }
-  }
-
-  private async handleReconnection() {
-    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) {
-      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-        console.error('Max reconnection attempts reached. Connection permanently lost.');
-        this.notifyConnectionLost();
-      }
-      return;
-    }
-
-    this.isReconnecting = true;
-    this.reconnectAttempts++;
-    console.log(`Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-
-    try {
-      // Wait before attempting reconnection with exponential backoff
-      const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
-      await new Promise(resolve => setTimeout(resolve, delay));
-
       if (!this.localConnection) {
-        console.error('No local connection available for reconnection');
-        this.isReconnecting = false;
-        return;
+        throw new Error('No local connection available');
       }
-
-      // Check for IP change first
-      await this.checkForIpChange();
-
-      // Try ICE restart
-      await this.performICERestart();
-
-    } catch (error) {
-      console.error('Reconnection failed:', error);
-      this.isReconnecting = false;
       
-      // Schedule next reconnection attempt
-      if (this.reconnectAttempts < this.maxReconnectAttempts) {
-        this.reconnectInterval = setTimeout(() => {
-          this.handleReconnection();
-        }, 5000);
-      } else {
-        this.notifyConnectionLost();
-      }
-    }
-  }
-
-  private async performICERestart() {
-    if (!this.localConnection) return;
-
-    console.log('Performing ICE restart...');
-    
-    try {
-      // Create new offer with ICE restart
+      // Try ICE restart first
       const offer = await this.localConnection.createOffer({ iceRestart: true });
       await this.localConnection.setLocalDescription(offer);
       
-      // Clear pending candidates
-      this.pendingIceCandidates = [];
-      
-      // For client reconnection, we need the server offer again
-      if (!this.isAdmin && this.lastServerOffer) {
-        console.log('Client performing ICE restart...');
-        // Don't do full reconnection anymore - let signaling handle it
+      if (this.isAdmin && this.lastServerOffer) {
+        // Admin sends new offer
+        const newServerOffer: WebRTCServerOffer = {
+          ...this.lastServerOffer,
+          offer,
+          timestamp: Date.now(),
+          serverIp: this.ipChangeManager.getCurrentIPSync()
+        };
+        
+        this.connectionManager.sendNewOffer(peerId, newServerOffer);
       }
       
-      this.isReconnecting = false;
-      console.log('ICE restart completed');
+      console.log('Reconnection attempt initiated for:', peerId);
       
     } catch (error) {
-      console.error('ICE restart failed:', error);
-      throw error;
+      console.error('Reconnection attempt failed for', peerId, error);
+      this.reconnectionManager.markReconnectionFailed(peerId);
     }
   }
 
-  private async reconnectAsClient() {
-    if (!this.lastServerOffer || !this.userId) return;
-
-    try {
-      console.log('Client reconnecting to server...');
-      
-      // Create new connection
-      const newConnection = new RTCPeerConnection(this.rtcConfiguration);
-      
-      // Close old connection
-      if (this.localConnection) {
-        this.localConnection.close();
-      }
-      
-      this.localConnection = newConnection;
-      
-      // Setup handlers for new connection
-      this.setupConnectionEventHandlers(newConnection);
-      
-      newConnection.ondatachannel = (event) => {
-        this.connectionManager.setupDataChannel(event.channel, this.lastServerOffer!.adminId);
-      };
-      
-      // Set remote description and create answer
-      await newConnection.setRemoteDescription(this.lastServerOffer.offer);
-      const answer = await newConnection.createAnswer();
-      await newConnection.setLocalDescription(answer);
-      
-      console.log('Client reconnection initiated');
-      
-    } catch (error) {
-      console.error('Client reconnection failed:', error);
-      throw error;
-    }
-  }
-
-  private notifyConnectionLost() {
-    console.log('Connection permanently lost - trying signaling-based recovery...');
+  private notifyConnectionLost(peerId?: string) {
+    console.log('Connection permanently lost for peer:', peerId);
     
-    // Dispatch custom event for UI to handle
     const event = new CustomEvent('webrtc-connection-lost', {
       detail: {
         isAdmin: this.isAdmin,
         organizationId: this.organizationId,
-        reconnectAttempts: this.reconnectAttempts
+        peerId: peerId,
+        reconnectionState: peerId ? this.reconnectionManager.getReconnectionState(peerId) : null
       }
     });
     window.dispatchEvent(event);
@@ -457,41 +421,6 @@ class WebRTCService {
   sendLocationUpdate(locationData: any) {
     if (this.isAdmin) return;
     this.connectionManager.sendLocationUpdate(locationData);
-  }
-
-  private async getLocalIP(): Promise<string> {
-    try {
-      // Create a temporary peer connection to get local IP
-      const tempConnection = new RTCPeerConnection({ iceServers: [] });
-      const tempChannel = tempConnection.createDataChannel('');
-      
-      return new Promise((resolve) => {
-        tempConnection.onicecandidate = (event) => {
-          if (event.candidate) {
-            const candidate = event.candidate.candidate;
-            const ipMatch = candidate.match(/(\d+\.\d+\.\d+\.\d+)/);
-            if (ipMatch) {
-              tempConnection.close();
-              resolve(ipMatch[1]);
-              return;
-            }
-          }
-        };
-        
-        tempConnection.createOffer().then(offer => {
-          tempConnection.setLocalDescription(offer);
-        });
-        
-        // Fallback after 3 seconds
-        setTimeout(() => {
-          tempConnection.close();
-          resolve('unknown');
-        }, 3000);
-      });
-    } catch (error) {
-      console.error('Failed to get local IP:', error);
-      return 'unknown';
-    }
   }
 
   onLocationUpdate(callback: (userId: string, location: any) => void) {
@@ -516,18 +445,32 @@ class WebRTCService {
   }
 
   isCurrentlyReconnecting(): boolean {
-    return this.isReconnecting;
+    const allStates = this.reconnectionManager.getAllReconnectionStates();
+    return allStates.size > 0;
   }
 
   getReconnectAttempts(): number {
-    return this.reconnectAttempts;
+    const allStates = this.reconnectionManager.getAllReconnectionStates();
+    if (allStates.size === 0) return 0;
+    
+    // Return the highest attempt number
+    return Math.max(...Array.from(allStates.values()).map(state => state.attempt));
+  }
+
+  getDetailedReconnectionStatus(): Map<string, { isReconnecting: boolean; attempt: number; maxAttempts: number }> {
+    const peers = this.connectionManager.getAllPeers();
+    const statusMap = new Map();
+    
+    peers.forEach(peer => {
+      statusMap.set(peer.id, this.reconnectionManager.getReconnectionState(peer.id));
+    });
+    
+    return statusMap;
   }
 
   disconnect() {
-    if (this.reconnectInterval) {
-      clearTimeout(this.reconnectInterval);
-      this.reconnectInterval = null;
-    }
+    this.ipChangeManager.stopMonitoring();
+    this.reconnectionManager.clearAllReconnections();
 
     if (this.localConnection) {
       this.localConnection.close();
@@ -536,17 +479,19 @@ class WebRTCService {
 
     this.connectionManager.clearPeers();
     this.pendingIceCandidates = [];
-    this.reconnectAttempts = 0;
-    this.isReconnecting = false;
     this.lastServerOffer = null;
-    this.currentLocalIP = null;
   }
 
   async forceReconnect() {
-    if (this.isReconnecting) return;
+    const peers = this.connectionManager.getConnectedPeers();
     
-    this.reconnectAttempts = 0;
-    await this.handleReconnection();
+    // Clear existing reconnection attempts
+    peers.forEach(peer => {
+      this.reconnectionManager.clearReconnectionAttempt(peer.id);
+    });
+    
+    // Force new reconnection attempts
+    await this.handleConnectionLoss();
   }
 }
 

@@ -39,6 +39,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [connectionLost, setConnectionLost] = useState(false);
+  const [detailedReconnectionStatus, setDetailedReconnectionStatus] = useState<Map<string, any>>(new Map());
 
   useEffect(() => {
     if (selectedOrg && !showQRGenerator) {
@@ -49,7 +50,6 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
   }, [selectedOrg, showQRGenerator]);
 
   useEffect(() => {
-    // Listen for connection lost events
     const handleConnectionLost = (event: CustomEvent) => {
       console.log('Connection lost event received:', event.detail);
       setConnectionLost(true);
@@ -58,16 +58,18 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
 
     window.addEventListener('webrtc-connection-lost', handleConnectionLost as EventListener);
 
-    // Periodic status check
+    // Enhanced status check with detailed reconnection info
     const statusInterval = setInterval(() => {
       if (selectedOrg) {
         const status = webRTCService.getConnectionStatus();
         const reconnecting = webRTCService.isCurrentlyReconnecting();
         const attempts = webRTCService.getReconnectAttempts();
+        const detailedStatus = webRTCService.getDetailedReconnectionStatus();
         
         setWebRTCStatus(status);
         setIsReconnecting(reconnecting);
         setReconnectAttempts(attempts);
+        setDetailedReconnectionStatus(detailedStatus);
         
         if (status === 'connected') {
           setConnectionLost(false);
@@ -215,6 +217,10 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
     setSelectedMember(memberId);
   };
 
+  const getReconnectionStatusForMember = (memberId: string) => {
+    return detailedReconnectionStatus.get(memberId) || { isReconnecting: false, attempt: 0, maxAttempts: 5 };
+  };
+
   if (showQRGenerator) {
     return (
       <WebRTCQRGenerator 
@@ -270,7 +276,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
         </div>
       </div>
 
-      {/* Connection Status Alert */}
+      {/* Enhanced Connection Status Alerts */}
       {connectionLost && (
         <Card className="border-orange-200 bg-orange-50">
           <CardContent className="p-4">
@@ -296,15 +302,27 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
         </Card>
       )}
 
-      {/* Reconnecting Status */}
       {isReconnecting && (
         <Card className="border-blue-200 bg-blue-50">
           <CardContent className="p-4">
             <div className="flex items-center space-x-3">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              <p className="text-sm text-blue-700">
-                Reconnecting to peers... Attempt {reconnectAttempts} of 5
-              </p>
+              <div>
+                <p className="text-sm text-blue-700">
+                  Reconnecting to peers... Attempt {reconnectAttempts} of 5
+                </p>
+                {detailedReconnectionStatus.size > 0 && (
+                  <div className="mt-2 text-xs text-blue-600">
+                    {Array.from(detailedReconnectionStatus.entries()).map(([peerId, status]) => (
+                      status.isReconnecting && (
+                        <div key={peerId}>
+                          {peerId.slice(-4)}: {status.attempt}/{status.maxAttempts} attempts
+                        </div>
+                      )
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -393,7 +411,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
             </Card>
           </div>
 
-          {/* Member List */}
+          {/* Enhanced Member List with reconnection status */}
           <div>
             <Card>
               <CardHeader>
@@ -403,38 +421,46 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {members.map((member) => (
-                  <div 
-                    key={member.id}
-                    className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                      selectedMember === member.id ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
-                    }`}
-                    onClick={() => handleMemberSelect(member.id)}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium text-gray-900">{member.name}</span>
-                      <div className="flex items-center space-x-1">
-                        <Badge variant={member.status === 'active' ? 'default' : 'secondary'}>
-                          {member.status}
-                        </Badge>
-                        {member.latitude !== 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            GPS
+                {members.map((member) => {
+                  const reconnectionStatus = getReconnectionStatusForMember(member.id);
+                  return (
+                    <div 
+                      key={member.id}
+                      className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                        selectedMember === member.id ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                      }`}
+                      onClick={() => handleMemberSelect(member.id)}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-gray-900">{member.name}</span>
+                        <div className="flex items-center space-x-1">
+                          <Badge variant={member.status === 'active' ? 'default' : 'secondary'}>
+                            {member.status}
                           </Badge>
-                        )}
+                          {member.latitude !== 0 && (
+                            <Badge variant="outline" className="text-xs">
+                              GPS
+                            </Badge>
+                          )}
+                          {reconnectionStatus.isReconnecting && (
+                            <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-200">
+                              Reconnecting ({reconnectionStatus.attempt}/{reconnectionStatus.maxAttempts})
+                            </Badge>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center text-sm text-gray-500">
-                      <Clock className="w-3 h-3 mr-1" />
-                      {member.lastSeen}
-                    </div>
-                    {member.status === 'active' && member.latitude !== 0 && (
-                      <div className="text-xs text-gray-400 mt-1">
-                        {member.latitude.toFixed(4)}, {member.longitude.toFixed(4)}
+                      <div className="flex items-center text-sm text-gray-500">
+                        <Clock className="w-3 h-3 mr-1" />
+                        {member.lastSeen}
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {member.status === 'active' && member.latitude !== 0 && (
+                        <div className="text-xs text-gray-400 mt-1">
+                          {member.latitude.toFixed(4)}, {member.longitude.toFixed(4)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
 
                 {members.length === 0 && webRTCStatus === 'connected' && (
                   <div className="text-center py-8">
