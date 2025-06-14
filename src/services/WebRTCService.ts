@@ -1,43 +1,36 @@
+
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { SignalingMessage } from './webrtc/SignalingService';
-import { DeviceInfo, AddressBook } from './webrtc/MeshNetworkManager';
 import { WebRTCServiceCore } from './webrtc/WebRTCServiceCore';
-import { WebRTCMeshService } from './webrtc/WebRTCMeshService';
+// Removed: import { WebRTCMeshService } from './webrtc/WebRTCMeshService';
 import { WebRTCManagerCollection } from './webrtc/WebRTCManagerCollection';
 
 class WebRTCService {
   private core: WebRTCServiceCore;
-  private meshService: WebRTCMeshService;
+  // Removed: private meshService: WebRTCMeshService;
   private managers: WebRTCManagerCollection;
 
   constructor() {
     this.core = new WebRTCServiceCore();
-    this.meshService = new WebRTCMeshService();
+    // Removed: this.meshService = new WebRTCMeshService();
     this.managers = new WebRTCManagerCollection(this.core);
-    
+
     this.managers.setupEventManagerCallbacks(this.core);
   }
 
   async createServerOffer(organizationId: string, organizationName: string): Promise<WebRTCServerOffer> {
     this.core.updateStates(true, `admin-${organizationId}-${Date.now()}`, organizationId);
     this.managers.updateManagerStates(true, organizationId);
-    
-    // Initialize mesh network
-    this.meshService.initializeMeshNetwork(
-      this.core.userId!,
-      organizationName,
-      organizationId,
-      true,
-      this.core.connectionManager,
-      this.core.ipChangeManager
-    );
-    
+
+    // Removed: Initialize mesh network
+    // Removed: this.meshService.initializeMeshNetwork(...);
+
     const serverOffer = await this.managers.serverManager.createServerOffer(
       organizationId,
       organizationName,
       this.core.userId!
     );
-    
+
     this.setupConnectionHandlers();
     this.managers.eventManager.setupIPChangeHandling();
 
@@ -47,24 +40,16 @@ class WebRTCService {
   async connectToServer(offerData: WebRTCServerOffer, userId: string, userName: string): Promise<void> {
     this.core.updateStates(false, userId, offerData.organizationId);
     this.managers.updateManagerStates(false, offerData.organizationId);
-    
-    // Initialize mesh network
-    this.meshService.initializeMeshNetwork(
-      userId,
-      userName,
-      offerData.organizationId,
-      false,
-      this.core.connectionManager,
-      this.core.ipChangeManager
-    );
-    
+
+    // Removed: Initialize mesh network
+    // Removed: this.meshService.initializeMeshNetwork(...);
+
     await this.managers.clientManager.connectToServer(offerData, userId, userName);
-    
+
     this.setupConnectionHandlers();
     this.managers.eventManager.setupIPChangeHandling();
-    
-    // Initiate mesh sync after connection
-    this.meshService.initiateMeshSync();
+
+    // Removed: meshService.initiateMeshSync();
   }
 
   private setupConnectionHandlers(): void {
@@ -180,44 +165,36 @@ class WebRTCService {
   getReconnectAttempts(): number {
     const allStates = this.core.reconnectionManager.getAllReconnectionStates();
     if (allStates.size === 0) return 0;
-    
+
     return Math.max(...Array.from(allStates.values()).map(state => state.attempt));
   }
 
   getDetailedReconnectionStatus(): Map<string, { isReconnecting: boolean; attempt: number; maxAttempts: number }> {
     const peers = this.core.connectionManager.getAllPeers();
     const statusMap = new Map();
-    
+
     peers.forEach(peer => {
       statusMap.set(peer.id, this.core.reconnectionManager.getReconnectionState(peer.id));
     });
-    
+
     return statusMap;
   }
 
+  // Removed: Mesh network API (getMeshNetworkStatus, getAllDevicesInNetwork, onMeshNetworkUpdate, etc.)
+  // All following methods are now stubs for compatibility, but do nothing:
   getMeshNetworkStatus() {
-    return this.meshService.getMeshNetworkStatus();
+    return null;
   }
-
-  getAllDevicesInNetwork(): DeviceInfo[] {
-    return this.meshService.getAllDevicesInNetwork();
+  getAllDevicesInNetwork() {
+    return [];
   }
-
-  onMeshNetworkUpdate(callback: (devices: DeviceInfo[]) => void): void {
-    this.meshService.onMeshNetworkUpdate(callback);
-  }
-
-  broadcastToMeshNetwork(data: any): void {
-    this.meshService.broadcastToMeshNetwork(data);
-  }
-
-  requestMeshNetworkSync(): void {
-    this.meshService.initiateMeshSync();
-  }
+  onMeshNetworkUpdate(_: any) {}
+  broadcastToMeshNetwork(_: any) {}
+  requestMeshNetworkSync() {}
 
   disconnect(): void {
     this.core.cleanup();
-    this.meshService.cleanup();
+    // Removed: this.meshService.cleanup();
   }
 
   async forceReconnect(): Promise<void> {
@@ -234,4 +211,5 @@ class WebRTCService {
 }
 
 export const webRTCService = new WebRTCService();
-export type { WebRTCServerOffer, PeerConnection, WebRTCMessage, DeviceInfo, AddressBook };
+export type { WebRTCServerOffer, PeerConnection, WebRTCMessage };
+
