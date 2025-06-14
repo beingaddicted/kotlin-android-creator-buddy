@@ -1,177 +1,67 @@
-import { PeerConnection, WebRTCMessage } from './types';
+
+import { PeerConnection } from './types';
 import { SignalingService, SignalingMessage } from './SignalingService';
+import { PeerManager } from './PeerManager';
+import { DataChannelManager } from './DataChannelManager';
+import { LocationManager } from './LocationManager';
 
 export class ConnectionManager {
-  private peers = new Map<string, PeerConnection>();
-  private onLocationReceived?: (userId: string, location: any) => void;
-  private onPeerStatusChanged?: (peers: PeerConnection[]) => void;
-  private onSignalingReceived?: (message: SignalingMessage, fromPeerId: string) => void;
-  private isServer = false;
-  private signalingService = new SignalingService();
+  private peerManager: PeerManager;
+  private dataChannelManager: DataChannelManager;
+  private locationManager: LocationManager;
+  private signalingService: SignalingService;
+
+  constructor() {
+    this.signalingService = new SignalingService();
+    this.peerManager = new PeerManager();
+    this.dataChannelManager = new DataChannelManager(this.peerManager, this.signalingService);
+    this.locationManager = new LocationManager(this.peerManager);
+  }
 
   setAsServer(isServer: boolean) {
-    this.isServer = isServer;
     this.signalingService.setAsServer(isServer);
+    this.dataChannelManager.setAsServer(isServer);
+    this.locationManager.setAsServer(isServer);
     
     // Setup signaling message handler
     this.signalingService.setSignalingMessageHandler((message, fromPeerId) => {
-      if (this.onSignalingReceived) {
-        this.onSignalingReceived(message, fromPeerId);
-      }
+      this.dataChannelManager.onSignalingMessage((msg, peerId) => {
+        // Forward to external handler if set
+      });
     });
   }
 
   setupDataChannel(dataChannel: RTCDataChannel, peerId: string) {
-    dataChannel.onopen = () => {
-      console.log('WebRTC: Data channel opened with', peerId);
-      
-      if (this.peers.has(peerId)) {
-        const peer = this.peers.get(peerId)!;
-        peer.status = 'connected';
-        peer.dataChannel = dataChannel;
-        this.peers.set(peerId, peer);
-        this.notifyPeerStatusChanged();
-        
-        // Register with signaling service
-        this.signalingService.registerDataChannel(peerId, dataChannel);
-        
-        // If server, request initial location from client
-        if (this.isServer) {
-          this.requestLocationUpdate(peerId);
-        }
-      }
-    };
-
-    dataChannel.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      
-      // Check if it's a signaling message or regular WebRTC message
-      if (this.isSignalingMessage(message)) {
-        // Let SignalingService handle it
-        return;
-      } else {
-        // Handle as regular WebRTC message
-        this.handleDataChannelMessage(message as WebRTCMessage, peerId);
-      }
-    };
-
-    dataChannel.onclose = () => {
-      console.log('WebRTC: Data channel closed with', peerId);
-      
-      if (this.peers.has(peerId)) {
-        const peer = this.peers.get(peerId)!;
-        peer.status = 'disconnected';
-        this.peers.set(peerId, peer);
-        this.notifyPeerStatusChanged();
-      }
-      
-      this.signalingService.removeDataChannel(peerId);
-    };
-
-    dataChannel.onerror = (error) => {
-      console.error('WebRTC: Data channel error with', peerId, error);
-    };
-  }
-
-  private isSignalingMessage(data: any): boolean {
-    return data && 
-           typeof data === 'object' &&
-           ['new-offer', 'new-answer', 'ice-candidate', 'ip-changed'].includes(data.type) &&
-           data.fromId &&
-           typeof data.timestamp === 'number';
-  }
-
-  private handleDataChannelMessage(message: WebRTCMessage, peerId: string) {
-    console.log('WebRTC: Received message:', message.type, 'from:', peerId);
-
-    switch (message.type) {
-      case 'location':
-        if (this.onLocationReceived) {
-          if (this.peers.has(peerId)) {
-            const peer = this.peers.get(peerId)!;
-            peer.lastSeen = Date.now();
-            this.peers.set(peerId, peer);
-          }
-          this.onLocationReceived(peerId, message.data);
-        }
-        break;
-        
-      case 'location-request':
-        // Client received location request from server
-        if (!this.isServer) {
-          this.sendCurrentLocation();
-        }
-        break;
-    }
+    this.dataChannelManager.setupDataChannel(dataChannel, peerId);
   }
 
   addPeer(peer: PeerConnection) {
-    this.peers.set(peer.id, peer);
-    this.notifyPeerStatusChanged();
+    this.peerManager.addPeer(peer);
   }
 
   getPeer(peerId: string): PeerConnection | undefined {
-    return this.peers.get(peerId);
+    return this.peerManager.getPeer(peerId);
   }
 
   getConnectedPeers(): PeerConnection[] {
-    return Array.from(this.peers.values()).filter(peer => peer.status === 'connected');
+    return this.peerManager.getConnectedPeers();
   }
 
   getAllPeers(): PeerConnection[] {
-    return Array.from(this.peers.values());
+    return this.peerManager.getAllPeers();
   }
 
-  // Server method to request location from all connected clients
+  // Location methods
   requestLocationFromAllClients() {
-    if (!this.isServer) return;
-    
-    this.getConnectedPeers().forEach(peer => {
-      this.requestLocationUpdate(peer.id);
-    });
+    this.locationManager.requestLocationFromAllClients();
   }
 
-  // Server method to request location from specific client
   requestLocationUpdate(peerId: string) {
-    if (!this.isServer) return;
-    
-    const peer = this.getPeer(peerId);
-    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
-      const message: WebRTCMessage = {
-        type: 'location-request',
-        data: {},
-        timestamp: Date.now()
-      };
-      peer.dataChannel.send(JSON.stringify(message));
-      console.log('WebRTC: Location request sent to', peerId);
-    }
+    this.locationManager.requestLocationUpdate(peerId);
   }
 
-  // Client method to send location to server
   sendLocationUpdate(locationData: any, serverPeerId?: string) {
-    if (this.isServer) return; // Only clients send location
-    
-    const message: WebRTCMessage = {
-      type: 'location',
-      data: locationData,
-      timestamp: Date.now()
-    };
-
-    // Send to server (first connected peer for client)
-    const connectedPeers = this.getConnectedPeers();
-    const targetPeer = serverPeerId ? this.getPeer(serverPeerId) : connectedPeers[0];
-    
-    if (targetPeer?.dataChannel && targetPeer.dataChannel.readyState === 'open') {
-      targetPeer.dataChannel.send(JSON.stringify(message));
-      console.log('WebRTC: Location update sent to server');
-    }
-  }
-
-  // Client method to send current location when requested
-  private sendCurrentLocation() {
-    // This will be called by LocationService
-    const event = new CustomEvent('webrtc-location-requested');
-    window.dispatchEvent(event);
+    this.locationManager.sendLocationUpdate(locationData, serverPeerId);
   }
 
   // Signaling methods
@@ -192,29 +82,19 @@ export class ConnectionManager {
   }
 
   onSignalingMessage(callback: (message: SignalingMessage, fromPeerId: string) => void) {
-    this.onSignalingReceived = callback;
+    this.dataChannelManager.onSignalingMessage(callback);
   }
 
   clearPeers() {
-    this.peers.forEach(peer => {
-      peer.connection.close();
-    });
-    this.peers.clear();
+    this.peerManager.clearPeers();
     this.signalingService.clearDataChannels();
-    this.notifyPeerStatusChanged();
   }
 
   onLocationUpdate(callback: (userId: string, location: any) => void) {
-    this.onLocationReceived = callback;
+    this.dataChannelManager.onLocationUpdate(callback);
   }
 
   onPeerStatusUpdate(callback: (peers: PeerConnection[]) => void) {
-    this.onPeerStatusChanged = callback;
-  }
-
-  private notifyPeerStatusChanged() {
-    if (this.onPeerStatusChanged) {
-      this.onPeerStatusChanged(Array.from(this.peers.values()));
-    }
+    this.peerManager.onPeerStatusUpdate(callback);
   }
 }
