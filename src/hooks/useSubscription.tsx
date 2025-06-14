@@ -56,7 +56,13 @@ export const useSubscription = (organizationId?: string) => {
         return;
       }
 
-      setSubscription(data);
+      if (data) {
+        const typedData: Subscription = {
+          ...data,
+          status: data.status as 'active' | 'inactive' | 'past_due' | 'canceled'
+        };
+        setSubscription(typedData);
+      }
     } catch (error) {
       console.error('Error fetching subscription:', error);
     } finally {
@@ -77,7 +83,14 @@ export const useSubscription = (organizationId?: string) => {
         return;
       }
 
-      setBillingHistory(data || []);
+      if (data) {
+        const typedData: BillingHistory[] = data.map(item => ({
+          ...item,
+          payment_status: item.payment_status as 'pending' | 'paid' | 'failed',
+          payment_method: item.payment_method as 'stripe' | 'google_play'
+        }));
+        setBillingHistory(typedData);
+      }
     } catch (error) {
       console.error('Error fetching billing history:', error);
     }
@@ -102,9 +115,13 @@ export const useSubscription = (organizationId?: string) => {
         return null;
       }
 
-      setSubscription(data);
+      const typedData: Subscription = {
+        ...data,
+        status: data.status as 'active' | 'inactive' | 'past_due' | 'canceled'
+      };
+      setSubscription(typedData);
       toast.success('Subscription created successfully');
-      return data;
+      return typedData;
     } catch (error) {
       console.error('Error creating subscription:', error);
       toast.error('Failed to create subscription');
@@ -137,7 +154,11 @@ export const useSubscription = (organizationId?: string) => {
         return;
       }
 
-      setSubscription(data);
+      const typedData: Subscription = {
+        ...data,
+        status: data.status as 'active' | 'inactive' | 'past_due' | 'canceled'
+      };
+      setSubscription(typedData);
       toast.success('Subscription updated successfully');
     } catch (error) {
       console.error('Error updating subscription:', error);
