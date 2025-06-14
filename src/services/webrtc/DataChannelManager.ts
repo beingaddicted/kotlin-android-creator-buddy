@@ -28,14 +28,25 @@ export class DataChannelManager {
       // Register with signaling service
       this.signalingService.registerDataChannel(peerId, dataChannel);
       
+      // Start device authentication if security manager is available
+      if (window.securityManager) {
+        window.securityManager.authenticateDevice(peerId);
+      }
+      
       // If server, request initial location from client
       if (this.isServer) {
         this.requestLocationUpdate(peerId);
       }
     };
 
-    dataChannel.onmessage = (event) => {
+    dataChannel.onmessage = async (event) => {
       const message = JSON.parse(event.data);
+      
+      // Handle security messages first
+      if (this.isSecurityMessage(message)) {
+        await this.handleSecurityMessage(message, peerId);
+        return;
+      }
       
       // Check if it's a signaling message or regular WebRTC message
       if (this.isSignalingMessage(message)) {
@@ -66,8 +77,52 @@ export class DataChannelManager {
            typeof data.timestamp === 'number';
   }
 
-  private handleDataChannelMessage(message: WebRTCMessage, peerId: string) {
+  private isSecurityMessage(data: any): boolean {
+    return data && 
+           typeof data === 'object' &&
+           ['auth-challenge', 'auth-response', 'secure-message'].includes(data.type);
+  }
+
+  private async handleSecurityMessage(message: WebRTCMessage, peerId: string): Promise<void> {
+    if (!window.securityManager) {
+      console.warn('DataChannelManager: Security message received but no security manager available');
+      return;
+    }
+
+    switch (message.type) {
+      case 'auth-challenge':
+        await window.securityManager.handleAuthChallenge(message.data);
+        break;
+        
+      case 'auth-response':
+        // This would need the original challenge - simplified for now
+        console.log('DataChannelManager: Auth response received from', peerId);
+        break;
+        
+      case 'secure-message':
+        const decrypted = await window.securityManager.decryptMessage(message);
+        if (decrypted) {
+          // Process the decrypted message
+          this.handleDataChannelMessage({
+            type: decrypted.type as any,
+            data: decrypted.message,
+            timestamp: message.timestamp
+          }, peerId);
+        }
+        break;
+    }
+  }
+
+  private async handleDataChannelMessage(message: WebRTCMessage, peerId: string) {
     console.log('WebRTC: Received message:', message.type, 'from:', peerId);
+
+    // Check permissions for sensitive operations
+    if (window.securityManager && this.requiresPermission(message.type)) {
+      if (!this.checkMessagePermissions(message, peerId)) {
+        console.warn('DataChannelManager: Insufficient permissions for message type:', message.type);
+        return;
+      }
+    }
 
     switch (message.type) {
       case 'location':
@@ -78,6 +133,12 @@ export class DataChannelManager {
         break;
         
       case 'location-request':
+        // Check if requester has permission to request location
+        if (window.securityManager && !window.securityManager.canAccessLocation(peerId)) {
+          console.warn('DataChannelManager: Unauthorized location request from', peerId);
+          return;
+        }
+        
         // Client received location request from server
         if (!this.isServer) {
           this.sendCurrentLocation();
@@ -88,6 +149,23 @@ export class DataChannelManager {
         // Handle mesh network data
         this.handleMeshData(message.data, peerId);
         break;
+    }
+  }
+
+  private requiresPermission(messageType: string): boolean {
+    return ['location-request', 'mesh-data'].includes(messageType);
+  }
+
+  private checkMessagePermissions(message: WebRTCMessage, peerId: string): boolean {
+    if (!window.securityManager) return true;
+
+    switch (message.type) {
+      case 'location-request':
+        return window.securityManager.canAccessLocation(peerId);
+      case 'mesh-data':
+        return window.securityManager.isDeviceTrusted(peerId);
+      default:
+        return true;
     }
   }
 
@@ -140,6 +218,41 @@ export class DataChannelManager {
       } catch (error) {
         console.error('DataChannelManager: Failed to send mesh data:', error);
       }
+    }
+  }
+
+  sendSecureMessage(peerId: string, message: any, messageType: string): Promise<void> {
+    if (!window.securityManager) {
+      // Fallback to unencrypted
+      this.sendMessage(peerId, message, messageType);
+      return;
+    }
+
+    const encryptedMessage = await window.securityManager.encryptMessage(message, peerId, messageType);
+    if (encryptedMessage) {
+      this.sendRawMessage(peerId, encryptedMessage);
+    } else {
+      console.warn('DataChannelManager: Failed to encrypt message, sending unencrypted');
+      this.sendMessage(peerId, message, messageType);
+    }
+  }
+
+  private sendMessage(peerId: string, data: any, type: string): void {
+    const peer = this.peerManager.getPeer(peerId);
+    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
+      const message: WebRTCMessage = {
+        type: type as any,
+        data: data,
+        timestamp: Date.now()
+      };
+      peer.dataChannel.send(JSON.stringify(message));
+    }
+  }
+
+  private sendRawMessage(peerId: string, message: WebRTCMessage): void {
+    const peer = this.peerManager.getPeer(peerId);
+    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
+      peer.dataChannel.send(JSON.stringify(message));
     }
   }
 

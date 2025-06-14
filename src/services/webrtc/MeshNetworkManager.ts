@@ -1,4 +1,3 @@
-
 export interface DeviceInfo {
   id: string;
   name: string;
@@ -279,7 +278,7 @@ export class MeshNetworkManager {
     }
   }
 
-  private saveAddressBookToStorage(): void {
+  private async saveAddressBookToStorage(): Promise<void> {
     try {
       const storageKey = `mesh_address_book_${this.currentDevice.organizationId}`;
       const addressBookData = {
@@ -287,19 +286,36 @@ export class MeshNetworkManager {
         lastUpdated: this.addressBook.lastUpdated,
         version: this.addressBook.version
       };
-      localStorage.setItem(storageKey, JSON.stringify(addressBookData));
+      
+      // Use secure storage if SecurityManager is available
+      if (window.securityManager) {
+        await window.securityManager.secureStore(storageKey, addressBookData);
+      } else {
+        // Fallback to regular localStorage
+        localStorage.setItem(storageKey, JSON.stringify(addressBookData));
+      }
     } catch (error) {
       console.error('MeshNetwork: Failed to save address book:', error);
     }
   }
 
-  private loadAddressBookFromStorage(): void {
+  private async loadAddressBookFromStorage(): Promise<void> {
     try {
       const storageKey = `mesh_address_book_${this.currentDevice.organizationId}`;
-      const stored = localStorage.getItem(storageKey);
+      let addressBookData = null;
       
-      if (stored) {
-        const addressBookData = JSON.parse(stored);
+      // Try secure storage first
+      if (window.securityManager) {
+        addressBookData = await window.securityManager.secureRetrieve(storageKey);
+      } else {
+        // Fallback to regular localStorage
+        const stored = localStorage.getItem(storageKey);
+        if (stored) {
+          addressBookData = JSON.parse(stored);
+        }
+      }
+      
+      if (addressBookData) {
         this.addressBook.devices = new Map(addressBookData.devices);
         this.addressBook.lastUpdated = addressBookData.lastUpdated;
         this.addressBook.version = addressBookData.version;
