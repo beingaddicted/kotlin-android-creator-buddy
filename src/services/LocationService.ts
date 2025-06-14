@@ -1,6 +1,7 @@
 import { Geolocation } from '@capacitor/geolocation';
 import { App } from '@capacitor/app';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { webRTCService } from './WebRTCService';
 
 export interface LocationData {
   id: string;
@@ -32,6 +33,9 @@ class LocationService {
 
     this.isTracking = true;
     console.log('Starting location tracking for user:', userId);
+
+    // Initialize WebRTC connection
+    await webRTCService.initializeAsClient(userId, organizationId);
 
     // Listen for app state changes
     App.addListener('appStateChange', ({ isActive }) => {
@@ -66,7 +70,16 @@ class LocationService {
           };
 
           this.saveLocationLocally(locationData);
-          console.log('Location updated:', locationData);
+          
+          // Send location update via WebRTC
+          webRTCService.sendLocationUpdate({
+            latitude: locationData.latitude,
+            longitude: locationData.longitude,
+            timestamp: locationData.timestamp,
+            accuracy: locationData.accuracy
+          });
+          
+          console.log('Location updated and sent via WebRTC:', locationData);
         }
       }
     );
@@ -79,6 +92,9 @@ class LocationService {
       await Geolocation.clearWatch({ id: this.watchId });
       this.watchId = null;
     }
+
+    // Disconnect WebRTC
+    webRTCService.disconnect();
 
     // Remove app state listeners
     App.removeAllListeners();
@@ -104,6 +120,14 @@ class LocationService {
       };
 
       this.saveLocationLocally(locationData);
+      
+      // Send background location update via WebRTC
+      webRTCService.sendLocationUpdate({
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
+        timestamp: locationData.timestamp,
+        accuracy: locationData.accuracy
+      });
     } catch (error) {
       console.error('Background location update failed:', error);
     }

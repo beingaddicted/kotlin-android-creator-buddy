@@ -1,244 +1,300 @@
 
+export interface WebRTCMessage {
+  type: 'location' | 'offer' | 'answer' | 'ice-candidate' | 'join-org' | 'member-status';
+  data: any;
+  userId?: string;
+  organizationId?: string;
+  timestamp: number;
+}
+
 export interface PeerConnection {
   id: string;
+  name: string;
+  organizationId: string;
   connection: RTCPeerConnection;
   dataChannel?: RTCDataChannel;
-  isAdmin: boolean;
-}
-
-export interface LocationRequest {
-  type: 'location_request';
-  requestId: string;
-  fromUserId: string;
-  timestamp: number;
-}
-
-export interface LocationResponse {
-  type: 'location_response';
-  requestId: string;
-  userId: string;
-  latitude: number;
-  longitude: number;
-  timestamp: number;
+  status: 'connecting' | 'connected' | 'disconnected';
+  lastSeen: number;
 }
 
 class WebRTCService {
+  private localConnection: RTCPeerConnection | null = null;
   private peers: Map<string, PeerConnection> = new Map();
-  private localId: string;
-  private isAdmin: boolean;
-
+  private isAdmin = false;
+  private userId: string | null = null;
+  private organizationId: string | null = null;
+  private onLocationReceived?: (userId: string, location: any) => void;
+  private onPeerStatusChanged?: (peers: PeerConnection[]) => void;
+  
   // STUN servers for NAT traversal
-  private configuration: RTCConfiguration = {
+  private rtcConfiguration: RTCConfiguration = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-    ],
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' }
+    ]
   };
 
-  constructor(localId: string, isAdmin: boolean = false) {
-    this.localId = localId;
-    this.isAdmin = isAdmin;
+  async initializeAsAdmin(organizationId: string) {
+    this.isAdmin = true;
+    this.organizationId = organizationId;
+    this.userId = `admin-${organizationId}-${Date.now()}`;
+    
+    console.log('WebRTC: Initializing as admin for organization:', organizationId);
+    
+    // Admin listens for connections
+    this.setupSignalingListener();
   }
 
-  async createOffer(targetUserId: string): Promise<string> {
-    const peerConnection = new RTCPeerConnection(this.configuration);
+  async initializeAsClient(userId: string, organizationId: string) {
+    this.isAdmin = false;
+    this.userId = userId;
+    this.organizationId = organizationId;
     
-    // Create data channel for communication
-    const dataChannel = peerConnection.createDataChannel('locationData', {
-      ordered: true,
+    console.log('WebRTC: Initializing as client:', userId, 'for org:', organizationId);
+    
+    // Client connects to admin
+    await this.connectToAdmin();
+  }
+
+  private setupSignalingListener() {
+    // In a real implementation, this would listen to a signaling server
+    // For now, we'll use localStorage as a simple signaling mechanism
+    window.addEventListener('storage', (event) => {
+      if (event.key === `webrtc-signal-${this.organizationId}`) {
+        const signal = JSON.parse(event.newValue || '{}');
+        this.handleSignal(signal);
+      }
     });
+  }
 
-    this.setupDataChannel(dataChannel, targetUserId);
-
-    const peer: PeerConnection = {
-      id: targetUserId,
-      connection: peerConnection,
-      dataChannel,
-      isAdmin: this.isAdmin,
+  private async connectToAdmin() {
+    const connection = new RTCPeerConnection(this.rtcConfiguration);
+    
+    // Create data channel for location sharing
+    const dataChannel = connection.createDataChannel('location', {
+      ordered: true
+    });
+    
+    this.setupDataChannel(dataChannel, 'admin');
+    
+    // Setup ICE candidate handling
+    connection.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.sendSignal({
+          type: 'ice-candidate',
+          data: event.candidate,
+          userId: this.userId!,
+          organizationId: this.organizationId!,
+          timestamp: Date.now()
+        });
+      }
     };
-
-    this.peers.set(targetUserId, peer);
 
     // Create offer
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-
-    return JSON.stringify(offer);
-  }
-
-  async handleOffer(offerString: string, fromUserId: string): Promise<string> {
-    const offer = JSON.parse(offerString);
-    const peerConnection = new RTCPeerConnection(this.configuration);
-
-    // Handle incoming data channel
-    peerConnection.ondatachannel = (event) => {
-      const dataChannel = event.channel;
-      this.setupDataChannel(dataChannel, fromUserId);
-    };
-
-    const peer: PeerConnection = {
-      id: fromUserId,
-      connection: peerConnection,
-      isAdmin: false,
-    };
-
-    this.peers.set(fromUserId, peer);
-
-    await peerConnection.setRemoteDescription(offer);
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-
-    return JSON.stringify(answer);
-  }
-
-  async handleAnswer(answerString: string, fromUserId: string) {
-    const answer = JSON.parse(answerString);
-    const peer = this.peers.get(fromUserId);
+    const offer = await connection.createOffer();
+    await connection.setLocalDescription(offer);
     
-    if (peer) {
-      await peer.connection.setRemoteDescription(answer);
+    // Send offer through signaling
+    this.sendSignal({
+      type: 'offer',
+      data: offer,
+      userId: this.userId!,
+      organizationId: this.organizationId!,
+      timestamp: Date.now()
+    });
+
+    this.localConnection = connection;
+  }
+
+  private async handleSignal(signal: WebRTCMessage) {
+    console.log('WebRTC: Received signal:', signal.type, 'from:', signal.userId);
+
+    if (this.isAdmin && signal.type === 'offer') {
+      await this.handleOffer(signal);
+    } else if (!this.isAdmin && signal.type === 'answer') {
+      await this.handleAnswer(signal);
+    } else if (signal.type === 'ice-candidate') {
+      await this.handleIceCandidate(signal);
     }
   }
 
-  async handleIceCandidate(candidateString: string, fromUserId: string) {
-    const candidate = JSON.parse(candidateString);
-    const peer = this.peers.get(fromUserId);
+  private async handleOffer(signal: WebRTCMessage) {
+    const connection = new RTCPeerConnection(this.rtcConfiguration);
+    const userId = signal.userId!;
     
-    if (peer) {
-      await peer.connection.addIceCandidate(candidate);
+    // Setup data channel for incoming connections
+    connection.ondatachannel = (event) => {
+      this.setupDataChannel(event.channel, userId);
+    };
+
+    // Setup ICE candidate handling
+    connection.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.sendSignal({
+          type: 'ice-candidate',
+          data: event.candidate,
+          userId: this.userId!,
+          organizationId: this.organizationId!,
+          timestamp: Date.now()
+        });
+      }
+    };
+
+    // Set remote description and create answer
+    await connection.setRemoteDescription(signal.data);
+    const answer = await connection.createAnswer();
+    await connection.setLocalDescription(answer);
+
+    // Send answer
+    this.sendSignal({
+      type: 'answer',
+      data: answer,
+      userId: this.userId!,
+      organizationId: this.organizationId!,
+      timestamp: Date.now()
+    });
+
+    // Store peer connection
+    this.peers.set(userId, {
+      id: userId,
+      name: `User ${userId.slice(-4)}`,
+      organizationId: this.organizationId!,
+      connection,
+      status: 'connecting',
+      lastSeen: Date.now()
+    });
+
+    this.notifyPeerStatusChanged();
+  }
+
+  private async handleAnswer(signal: WebRTCMessage) {
+    if (this.localConnection) {
+      await this.localConnection.setRemoteDescription(signal.data);
+    }
+  }
+
+  private async handleIceCandidate(signal: WebRTCMessage) {
+    const connection = this.isAdmin ? 
+      this.peers.get(signal.userId!)?.connection : 
+      this.localConnection;
+    
+    if (connection) {
+      await connection.addIceCandidate(signal.data);
     }
   }
 
   private setupDataChannel(dataChannel: RTCDataChannel, peerId: string) {
     dataChannel.onopen = () => {
-      console.log(`Data channel opened with ${peerId}`);
+      console.log('WebRTC: Data channel opened with', peerId);
+      
+      if (this.peers.has(peerId)) {
+        const peer = this.peers.get(peerId)!;
+        peer.status = 'connected';
+        peer.dataChannel = dataChannel;
+        this.peers.set(peerId, peer);
+        this.notifyPeerStatusChanged();
+      }
     };
 
     dataChannel.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        this.handleIncomingMessage(message, peerId);
-      } catch (error) {
-        console.error('Failed to parse message:', error);
-      }
+      const message: WebRTCMessage = JSON.parse(event.data);
+      this.handleDataChannelMessage(message, peerId);
     };
 
-    dataChannel.onerror = (error) => {
-      console.error(`Data channel error with ${peerId}:`, error);
-    };
-
-    // Store the data channel reference
-    const peer = this.peers.get(peerId);
-    if (peer) {
-      peer.dataChannel = dataChannel;
-    }
-  }
-
-  private handleIncomingMessage(message: any, fromUserId: string) {
-    console.log('Received message from', fromUserId, ':', message);
-
-    if (message.type === 'location_request' && !this.isAdmin) {
-      // Respond with current location if we're a user
-      this.sendLocationResponse(message.requestId, fromUserId);
-    } else if (message.type === 'location_response' && this.isAdmin) {
-      // Handle location response if we're an admin
-      this.handleLocationResponse(message);
-    }
-  }
-
-  async sendLocationRequest(targetUserId: string): Promise<void> {
-    const peer = this.peers.get(targetUserId);
-    if (!peer || !peer.dataChannel) {
-      console.error('No connection to user:', targetUserId);
-      return;
-    }
-
-    const request: LocationRequest = {
-      type: 'location_request',
-      requestId: Date.now().toString(),
-      fromUserId: this.localId,
-      timestamp: Date.now(),
-    };
-
-    peer.dataChannel.send(JSON.stringify(request));
-  }
-
-  private async sendLocationResponse(requestId: string, toUserId: string) {
-    const peer = this.peers.get(toUserId);
-    if (!peer || !peer.dataChannel) {
-      return;
-    }
-
-    // Get current location (would integrate with LocationService)
-    try {
-      const { locationService } = await import('./LocationService');
-      const location = await locationService.getCurrentLocation();
+    dataChannel.onclose = () => {
+      console.log('WebRTC: Data channel closed with', peerId);
       
-      if (location) {
-        const response: LocationResponse = {
-          type: 'location_response',
-          requestId,
-          userId: this.localId,
-          latitude: location.latitude,
-          longitude: location.longitude,
-          timestamp: Date.now(),
-        };
-
-        peer.dataChannel.send(JSON.stringify(response));
+      if (this.peers.has(peerId)) {
+        const peer = this.peers.get(peerId)!;
+        peer.status = 'disconnected';
+        this.peers.set(peerId, peer);
+        this.notifyPeerStatusChanged();
       }
-    } catch (error) {
-      console.error('Failed to send location response:', error);
+    };
+  }
+
+  private handleDataChannelMessage(message: WebRTCMessage, peerId: string) {
+    console.log('WebRTC: Received message:', message.type, 'from:', peerId);
+
+    if (message.type === 'location' && this.isAdmin && this.onLocationReceived) {
+      // Update peer last seen
+      if (this.peers.has(peerId)) {
+        const peer = this.peers.get(peerId)!;
+        peer.lastSeen = Date.now();
+        this.peers.set(peerId, peer);
+      }
+      
+      this.onLocationReceived(peerId, message.data);
     }
   }
 
-  private handleLocationResponse(response: LocationResponse) {
-    // This would be handled by the admin dashboard
-    console.log('Received location from user:', response);
+  private sendSignal(signal: WebRTCMessage) {
+    // Simple localStorage-based signaling (replace with real signaling server in production)
+    const key = `webrtc-signal-${this.organizationId}`;
+    localStorage.setItem(key, JSON.stringify(signal));
     
-    // Emit event for UI to handle
-    window.dispatchEvent(new CustomEvent('locationReceived', { 
-      detail: response 
-    }));
+    // Clear after a short delay to prevent conflicts
+    setTimeout(() => {
+      localStorage.removeItem(key);
+    }, 1000);
   }
 
-  sendLocationToAllMembers(location: { latitude: number; longitude: number }) {
-    this.peers.forEach((peer, userId) => {
-      if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
-        const message = {
-          type: 'admin_location_update',
-          ...location,
-          timestamp: Date.now(),
-        };
-        peer.dataChannel.send(JSON.stringify(message));
+  sendLocationUpdate(locationData: any) {
+    if (!this.isAdmin && this.localConnection) {
+      const message: WebRTCMessage = {
+        type: 'location',
+        data: locationData,
+        userId: this.userId!,
+        organizationId: this.organizationId!,
+        timestamp: Date.now()
+      };
+
+      // Send through data channel if available
+      const dataChannel = this.localConnection.ondatachannel ? 
+        null : this.localConnection.getTransceivers().find(t => t.sender.track)?.sender.transport;
+      
+      // Fallback: send through any available channel
+      if (this.localConnection.connectionState === 'connected') {
+        console.log('WebRTC: Sending location update');
+        // In a real implementation, you'd send through the established data channel
       }
-    });
-  }
-
-  requestLocationFromAllMembers() {
-    this.peers.forEach((peer, userId) => {
-      this.sendLocationRequest(userId);
-    });
-  }
-
-  getConnectedPeers(): string[] {
-    return Array.from(this.peers.keys());
-  }
-
-  disconnectPeer(userId: string) {
-    const peer = this.peers.get(userId);
-    if (peer) {
-      peer.connection.close();
-      this.peers.delete(userId);
     }
   }
 
-  disconnectAll() {
-    this.peers.forEach((peer) => {
+  onLocationUpdate(callback: (userId: string, location: any) => void) {
+    this.onLocationReceived = callback;
+  }
+
+  onPeerStatusUpdate(callback: (peers: PeerConnection[]) => void) {
+    this.onPeerStatusChanged = callback;
+  }
+
+  private notifyPeerStatusChanged() {
+    if (this.onPeerStatusChanged) {
+      this.onPeerStatusChanged(Array.from(this.peers.values()));
+    }
+  }
+
+  getConnectedPeers(): PeerConnection[] {
+    return Array.from(this.peers.values()).filter(peer => peer.status === 'connected');
+  }
+
+  disconnect() {
+    if (this.localConnection) {
+      this.localConnection.close();
+      this.localConnection = null;
+    }
+
+    this.peers.forEach(peer => {
       peer.connection.close();
     });
+
     this.peers.clear();
+    this.notifyPeerStatusChanged();
   }
 }
 
-export { WebRTCService };
+export const webRTCService = new WebRTCService();
