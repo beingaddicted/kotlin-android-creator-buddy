@@ -1,4 +1,3 @@
-
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { ConnectionManager } from './webrtc/ConnectionManager';
 import { SignalingMessage } from './webrtc/SignalingService';
@@ -8,6 +7,7 @@ import { WebRTCConnection } from './webrtc/WebRTCConnection';
 import { WebRTCSignaling } from './webrtc/WebRTCSignaling';
 import { WebRTCEventHandler } from './webrtc/WebRTCEventHandler';
 import { WebRTCOfferManager } from './webrtc/WebRTCOfferManager';
+import { AutoReconnectionManager } from './webrtc/AutoReconnectionManager';
 
 class WebRTCService {
   private webrtcConnection = new WebRTCConnection();
@@ -17,6 +17,7 @@ class WebRTCService {
   private webrtcSignaling = new WebRTCSignaling();
   private eventHandler = new WebRTCEventHandler();
   private offerManager = new WebRTCOfferManager();
+  private autoReconnectionManager = new AutoReconnectionManager();
   
   private isAdmin = false;
   private userId: string | null = null;
@@ -42,6 +43,9 @@ class WebRTCService {
     this.setupConnectionHandlers();
     this.setupIPChangeHandling();
 
+    // Initialize server state for auto-reconnection
+    this.autoReconnectionManager.initializeServerState(organizationId, organizationName, this.userId);
+
     const serverOffer = await this.offerManager.createServerOffer(
       this.webrtcConnection,
       organizationId,
@@ -50,7 +54,35 @@ class WebRTCService {
       this.ipChangeManager.getCurrentIPSync()
     );
 
+    // Save offer for auto-reconnection
+    this.autoReconnectionManager.getStoredState();
+
+    // Try to auto-reconnect to previous clients
+    setTimeout(async () => {
+      await this.attemptAutoReconnectionToClients();
+    }, 1000);
+
     return serverOffer;
+  }
+
+  private async attemptAutoReconnectionToClients(): Promise<void> {
+    console.log('Attempting auto-reconnection to previous clients...');
+    
+    const reconnected = await this.autoReconnectionManager.attemptAutoReconnection(
+      this.webrtcConnection,
+      this.offerManager,
+      this.connectionManager
+    );
+
+    if (reconnected) {
+      console.log('Auto-reconnection initiated successfully');
+      
+      // Dispatch event to notify UI
+      const event = new CustomEvent('webrtc-auto-reconnection-started', {
+        detail: { reconnectedClients: this.autoReconnectionManager.getStoredState()?.clients.length || 0 }
+      });
+      window.dispatchEvent(event);
+    }
   }
 
   async connectToServer(offerData: WebRTCServerOffer, userId: string, userName: string): Promise<void> {
@@ -106,6 +138,15 @@ class WebRTCService {
           const peers = this.connectionManager.getConnectedPeers();
           peers.forEach(peer => {
             this.reconnectionManager.markReconnectionSuccess(peer.id);
+            
+            // Save successful client connection for auto-reconnection
+            if (this.isAdmin) {
+              this.autoReconnectionManager.saveClientConnection(
+                peer.id,
+                peer.name,
+                peer.organizationId
+              );
+            }
           });
           
           this.ipChangeManager.setConnectionInstability(false);
@@ -370,7 +411,7 @@ class WebRTCService {
 
   isCurrentlyReconnecting(): boolean {
     const allStates = this.reconnectionManager.getAllReconnectionStates();
-    return allStates.size > 0;
+    return allStates.size > 0 || this.autoReconnectionManager.isReconnecting();
   }
 
   getReconnectAttempts(): number {
@@ -394,6 +435,7 @@ class WebRTCService {
   disconnect(): void {
     this.ipChangeManager.stopMonitoring();
     this.reconnectionManager.clearAllReconnections();
+    this.autoReconnectionManager.deactivateServer();
     this.webrtcConnection.close();
     this.connectionManager.clearPeers();
     this.offerManager.clearLastServerOffer();
@@ -407,6 +449,17 @@ class WebRTCService {
     });
     
     await this.handleConnectionLoss();
+  }
+
+  // New method to check for auto-reconnection capability
+  canAutoReconnect(): boolean {
+    return this.isAdmin && this.autoReconnectionManager.getStoredState() !== null;
+  }
+
+  // New method to get stored client count
+  getStoredClientCount(): number {
+    const state = this.autoReconnectionManager.getStoredState();
+    return state?.clients.length || 0;
   }
 }
 

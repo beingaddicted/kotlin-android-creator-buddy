@@ -42,10 +42,13 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [connectionLost, setConnectionLost] = useState(false);
   const [detailedReconnectionStatus, setDetailedReconnectionStatus] = useState<Map<string, any>>(new Map());
+  const [autoReconnectionStarted, setAutoReconnectionStarted] = useState(false);
+  const [storedClientCount, setStoredClientCount] = useState(0);
 
   useEffect(() => {
     if (selectedOrg && !showQRGenerator) {
       checkWebRTCStatus();
+      checkAutoReconnectionCapability();
     } else if (!selectedOrg) {
       cleanupWebRTC();
     }
@@ -58,7 +61,19 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
       setWebRTCStatus('disconnected');
     };
 
+    const handleAutoReconnectionStarted = (event: CustomEvent) => {
+      console.log('Auto-reconnection started:', event.detail);
+      setAutoReconnectionStarted(true);
+      setStoredClientCount(event.detail.reconnectedClients || 0);
+      
+      // Clear the notification after 10 seconds
+      setTimeout(() => {
+        setAutoReconnectionStarted(false);
+      }, 10000);
+    };
+
     window.addEventListener('webrtc-connection-lost', handleConnectionLost as EventListener);
+    window.addEventListener('webrtc-auto-reconnection-started', handleAutoReconnectionStarted as EventListener);
 
     const statusInterval = setInterval(() => {
       if (selectedOrg) {
@@ -80,6 +95,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
 
     return () => {
       window.removeEventListener('webrtc-connection-lost', handleConnectionLost as EventListener);
+      window.removeEventListener('webrtc-auto-reconnection-started', handleAutoReconnectionStarted as EventListener);
       clearInterval(statusInterval);
     };
   }, [selectedOrg]);
@@ -90,6 +106,16 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
     
     if (status === 'connected') {
       setupWebRTCListeners();
+    }
+  };
+
+  const checkAutoReconnectionCapability = () => {
+    const canAutoReconnect = webRTCService.canAutoReconnect();
+    const clientCount = webRTCService.getStoredClientCount();
+    
+    if (canAutoReconnect && clientCount > 0) {
+      setStoredClientCount(clientCount);
+      console.log(`Found ${clientCount} stored clients for potential auto-reconnection`);
     }
   };
 
@@ -114,6 +140,8 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
     setConnectionLost(false);
     setIsReconnecting(false);
     setReconnectAttempts(0);
+    setAutoReconnectionStarted(false);
+    setStoredClientCount(0);
   };
 
   const handleConnectionEstablished = (organizationId: string) => {
@@ -247,13 +275,21 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
                  isReconnecting ? `Reconnecting (${reconnectAttempts}/5)` : 'Server Offline'}
               </span>
             </div>
+            {storedClientCount > 0 && webRTCStatus === 'disconnected' && (
+              <div className="flex items-center space-x-1">
+                <MapPin className="w-4 h-4 text-blue-600" />
+                <span className="text-sm text-blue-600">
+                  {storedClientCount} stored clients
+                </span>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex space-x-2">
           {selectedOrg && webRTCStatus === 'disconnected' && !isReconnecting && (
             <Button onClick={() => setShowQRGenerator(true)}>
               <QrCode className="w-4 h-4 mr-2" />
-              Start Server
+              {storedClientCount > 0 ? 'Start Server (Auto-Reconnect)' : 'Start Server'}
             </Button>
           )}
           {connectionLost && (
@@ -273,6 +309,19 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
         </div>
       </div>
 
+      {autoReconnectionStarted && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="py-3">
+            <div className="flex items-center space-x-2">
+              <RefreshCw className="w-4 h-4 text-blue-600 animate-spin" />
+              <span className="text-sm text-blue-700 font-medium">
+                Auto-reconnection initiated to {storedClientCount} previous clients
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <ConnectionStatusCard
         connectionLost={connectionLost}
         isReconnecting={isReconnecting}
@@ -290,7 +339,7 @@ export const MemberTracker = ({ organizations }: MemberTrackerProps) => {
         onMemberChange={setSelectedMember}
       />
 
-      {selectedOrg && webRTCStatus === 'disconnected' && !isReconnecting && (
+      {selectedOrg && webRTCStatus === 'disconnected' && !isReconnecting && storedClientCount === 0 && (
         <SetupConnectionCard onStartServer={() => setShowQRGenerator(true)} />
       )}
 
