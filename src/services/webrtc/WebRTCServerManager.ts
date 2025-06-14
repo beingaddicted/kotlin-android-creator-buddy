@@ -1,4 +1,3 @@
-
 import { WebRTCServerOffer } from './types';
 import { WebRTCConnection } from './WebRTCConnection';
 import { ConnectionManager } from './ConnectionManager';
@@ -9,7 +8,7 @@ import { IPChangeManager } from './IPChangeManager';
 
 export class WebRTCServerManager {
   private webrtcConnection: WebRTCConnection;
-  private connectionManager: ConnectionManager;
+  public connectionManager: ConnectionManager; // Changed to public
   private reconnectionManager: ReconnectionManager;
   private offerManager: WebRTCOfferManager;
   private autoReconnectionManager: AutoReconnectionManager;

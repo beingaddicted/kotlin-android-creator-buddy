@@ -33,8 +33,20 @@ export const QRGenerator = ({ organizations }: QRGeneratorProps) => {
       const adminId = localStorage.getItem('adminId') || 'admin-' + Date.now();
       localStorage.setItem('adminId', adminId);
 
-      const qrDataURL = await qrService.generateQRCode(selectedOrg, org.name, adminId);
+      const { qrDataURL, inviteCode } = await qrService.generateQRCode(selectedOrg, org.name, adminId);
       setQrCodeDataURL(qrDataURL);
+
+      // Store the invite code as a pending request
+      const pendingInvites = JSON.parse(localStorage.getItem('pendingInvites') || '[]');
+      pendingInvites.push({
+        inviteCode,
+        organizationId: org.id,
+        organizationName: org.name,
+        adminId,
+        timestamp: Date.now(),
+      });
+      localStorage.setItem('pendingInvites', JSON.stringify(pendingInvites));
+
     } catch (error) {
       console.error('Failed to generate QR code:', error);
     } finally {

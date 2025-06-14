@@ -1,18 +1,18 @@
-
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, QrCode, MapPin, Play, Square, User, Clock, Navigation } from "lucide-react";
+import { ArrowLeft, QrCode, MapPin, Play, Square, User, Clock, Navigation, Hourglass, XCircle } from "lucide-react";
 import { QRScannerComponent } from "./user/QRScanner";
 import { UserRegistration } from "./user/UserRegistration";
 import { QRData } from "@/services/QRService";
 import { locationService, LocationData } from "@/services/LocationService";
+import { webRTCService } from "@/services/WebRTCService";
 
 interface UserInterfaceProps {
   onBack: () => void;
 }
 
-type UserState = 'initial' | 'scanning' | 'registering' | 'registered' | 'tracking';
+type UserState = 'initial' | 'scanning' | 'registering' | 'pending_approval' | 'join_denied' | 'registered' | 'tracking';
 
 export const UserInterface = ({ onBack }: UserInterfaceProps) => {
   const [state, setState] = useState<UserState>('initial');
@@ -27,9 +27,34 @@ export const UserInterface = ({ onBack }: UserInterfaceProps) => {
     const stored = localStorage.getItem('userRegistration');
     if (stored) {
       const data = JSON.parse(stored);
-      setRegistrationData(data);
-      setState('registered');
+      if (data.isApproved) {
+        setRegistrationData(data);
+        setState('registered');
+      } else if (data.isPending) {
+        setRegistrationData(data);
+        setState('pending_approval');
+      }
     }
+
+    const handleAdminResponse = (event: any) => {
+      const messageData = event.detail.data;
+      if (messageData.type === 'join_response') {
+        const regData = JSON.parse(localStorage.getItem('userRegistration') || '{}');
+        if (messageData.status === 'approved') {
+          regData.isApproved = true;
+          regData.isPending = false;
+          localStorage.setItem('userRegistration', JSON.stringify(regData));
+          setRegistrationData(regData);
+          setState('registered');
+        } else {
+          localStorage.removeItem('userRegistration');
+          localStorage.removeItem('userId');
+          setState('join_denied');
+        }
+      }
+    };
+
+    window.addEventListener('webrtc-location-updated', handleAdminResponse);
 
     // Check if location tracking is active
     setIsTracking(locationService.isCurrentlyTracking());
@@ -51,13 +76,20 @@ export const UserInterface = ({ onBack }: UserInterfaceProps) => {
     setState('registering');
   };
 
-  const handleRegistrationComplete = (userData: any) => {
-    setState('registered');
-    // Reload registration data
-    const stored = localStorage.getItem('userRegistration');
-    if (stored) {
-      setRegistrationData(JSON.parse(stored));
-    }
+  const handleJoinRequest = (regData: any, qrData: QRData) => {
+    const payload = {
+      type: 'join_request',
+      payload: {
+        userData: regData,
+        qrData: qrData,
+      }
+    };
+    webRTCService.sendLocationUpdate(payload);
+    
+    const pendingRegData = { ...regData, isPending: true };
+    localStorage.setItem('userRegistration', JSON.stringify(pendingRegData));
+    setRegistrationData(pendingRegData);
+    setState('pending_approval');
   };
 
   const startLocationTracking = async () => {
@@ -129,10 +161,52 @@ export const UserInterface = ({ onBack }: UserInterfaceProps) => {
         return qrData ? (
           <UserRegistration
             qrData={qrData}
-            onRegistrationComplete={handleRegistrationComplete}
+            onJoinRequest={handleJoinRequest}
             onBack={() => setState('initial')}
           />
         ) : null;
+      
+      case 'pending_approval':
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Hourglass className="w-5 h-5 mr-2 text-yellow-500" />
+                Request Sent
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-center space-y-4">
+              <p className="text-gray-600">
+                Your request to join "{registrationData?.organizationName}" has been sent.
+              </p>
+              <p className="font-semibold">Waiting for admin approval...</p>
+              <div className="bg-blue-50 p-4 rounded-lg text-sm text-blue-800">
+                You can close this window. You will be automatically joined once the admin approves your request.
+              </div>
+            </CardContent>
+          </Card>
+        );
+
+      case 'join_denied':
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <XCircle className="w-5 h-5 mr-2 text-red-500" />
+                Request Denied
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-center space-y-4">
+              <p className="text-gray-600">
+                Your request to join the organization was denied by the administrator.
+              </p>
+              <Button onClick={() => setState('initial')}>
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Home
+              </Button>
+            </CardContent>
+          </Card>
+        );
 
       case 'registered':
       case 'tracking':

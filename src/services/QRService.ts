@@ -1,3 +1,4 @@
+
 import QRCode from 'qrcode';
 import { WebRTCServerOffer } from './webrtc/types';
 
@@ -11,14 +12,15 @@ export interface QRData {
 }
 
 class QRService {
-  async generateQRCode(organizationId: string, organizationName: string, adminId: string): Promise<string> {
+  async generateQRCode(organizationId: string, organizationName: string, adminId: string): Promise<{ qrDataURL: string; inviteCode: string; }> {
+    const inviteCode = this.generateInviteCode();
     const qrData: QRData = {
       type: 'organization_invite',
       organizationId,
       organizationName,
       adminId,
       timestamp: Date.now(),
-      inviteCode: this.generateInviteCode(),
+      inviteCode,
     };
 
     try {
@@ -31,7 +33,7 @@ class QRService {
         }
       });
 
-      return qrCodeDataURL;
+      return { qrCodeDataURL, inviteCode };
     } catch (error) {
       console.error('QR Code generation failed:', error);
       throw new Error('Failed to generate QR code');
@@ -61,7 +63,7 @@ class QRService {
     try {
       const data = JSON.parse(qrString);
       
-      if (data.type === 'organization_invite' && data.organizationId && data.adminId) {
+      if (data.type === 'organization_invite' && data.organizationId && data.adminId && data.inviteCode) {
         return data as QRData;
       }
 

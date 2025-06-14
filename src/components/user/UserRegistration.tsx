@@ -15,11 +15,11 @@ interface UserData {
 
 interface UserRegistrationProps {
   qrData: QRData;
-  onRegistrationComplete: (userData: UserData) => void;
+  onJoinRequest: (registrationData: any, qrData: QRData) => void;
   onBack: () => void;
 }
 
-export const UserRegistration = ({ qrData, onRegistrationComplete, onBack }: UserRegistrationProps) => {
+export const UserRegistration = ({ qrData, onJoinRequest, onBack }: UserRegistrationProps) => {
   const [userData, setUserData] = useState<UserData>({
     name: '',
     age: '',
@@ -60,16 +60,16 @@ export const UserRegistration = ({ qrData, onRegistrationComplete, onBack }: Use
       localStorage.setItem('userRegistration', JSON.stringify(registrationData));
       localStorage.setItem('userId', userId);
 
-      console.log('User registered:', registrationData);
+      console.log('User requesting to join:', registrationData);
       
-      // Simulate registration request to admin (in real P2P, this would be sent via WebRTC)
-      onRegistrationComplete(userData);
+      // Send join request to admin
+      onJoinRequest(registrationData, qrData);
     } catch (error) {
       console.error('Registration failed:', error);
       alert('Registration failed. Please try again.');
-    } finally {
       setIsSubmitting(false);
     }
+    // No longer setting isSubmitting to false here, as we wait for admin
   };
 
   return (
@@ -152,7 +152,7 @@ export const UserRegistration = ({ qrData, onRegistrationComplete, onBack }: Use
               className="w-full"
               disabled={isSubmitting}
             >
-              {isSubmitting ? 'Joining...' : 'Join Organization'}
+              {isSubmitting ? 'Sending Request...' : 'Request to Join Organization'}
             </Button>
           </form>
 
