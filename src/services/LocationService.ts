@@ -1,5 +1,5 @@
 import { Geolocation } from '@capacitor/geolocation';
-import { BackgroundTask } from '@capacitor/background-task';
+import { App } from '@capacitor/app';
 import { LocalNotifications } from '@capacitor/local-notifications';
 
 export interface LocationData {
@@ -14,7 +14,6 @@ export interface LocationData {
 
 class LocationService {
   private watchId: string | null = null;
-  private backgroundTaskId: number | undefined;
   private isTracking = false;
   private locationData: LocationData[] = [];
 
@@ -34,11 +33,12 @@ class LocationService {
     this.isTracking = true;
     console.log('Starting location tracking for user:', userId);
 
-    // Start background task
-    this.backgroundTaskId = await BackgroundTask.beforeExit(async () => {
-      console.log('App going to background, maintaining location tracking');
-      await this.scheduleLocationUpdate(userId, organizationId);
-      BackgroundTask.finish({ taskId: this.backgroundTaskId! });
+    // Listen for app state changes
+    App.addListener('appStateChange', ({ isActive }) => {
+      if (!isActive) {
+        console.log('App going to background, maintaining location tracking');
+        this.scheduleLocationUpdate(userId, organizationId);
+      }
     });
 
     // Start continuous location watching
@@ -80,9 +80,8 @@ class LocationService {
       this.watchId = null;
     }
 
-    if (this.backgroundTaskId) {
-      BackgroundTask.finish({ taskId: this.backgroundTaskId });
-    }
+    // Remove app state listeners
+    App.removeAllListeners();
 
     console.log('Location tracking stopped');
   }

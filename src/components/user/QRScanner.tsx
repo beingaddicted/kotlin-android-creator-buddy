@@ -131,11 +131,9 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
                 className="hidden"
                 id="qr-upload"
               />
-              <label htmlFor="qr-upload">
-                <Button variant="outline" as="span">
-                  Upload QR Image
-                </Button>
-              </label>
+              <Button variant="outline" className="cursor-pointer" onClick={() => document.getElementById('qr-upload')?.click()}>
+                Upload QR Image
+              </Button>
             </div>
           </div>
         ) : (
