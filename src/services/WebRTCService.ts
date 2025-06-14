@@ -1,13 +1,18 @@
+
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { ConnectionManager } from './webrtc/ConnectionManager';
 import { SignalingMessage } from './webrtc/SignalingService';
-import { IPChangeManager, IPChangeEvent } from './webrtc/IPChangeManager';
+import { IPChangeManager } from './webrtc/IPChangeManager';
 import { ReconnectionManager } from './webrtc/ReconnectionManager';
 import { WebRTCConnection } from './webrtc/WebRTCConnection';
 import { WebRTCSignaling } from './webrtc/WebRTCSignaling';
 import { WebRTCEventHandler } from './webrtc/WebRTCEventHandler';
 import { WebRTCOfferManager } from './webrtc/WebRTCOfferManager';
 import { AutoReconnectionManager } from './webrtc/AutoReconnectionManager';
+import { WebRTCEventManager } from './webrtc/WebRTCEventManager';
+import { WebRTCReconnectionHandler } from './webrtc/WebRTCReconnectionHandler';
+import { WebRTCServerManager } from './webrtc/WebRTCServerManager';
+import { WebRTCClientManager } from './webrtc/WebRTCClientManager';
 
 class WebRTCService {
   private webrtcConnection = new WebRTCConnection();
@@ -19,70 +24,88 @@ class WebRTCService {
   private offerManager = new WebRTCOfferManager();
   private autoReconnectionManager = new AutoReconnectionManager();
   
+  // New modular managers
+  private eventManager: WebRTCEventManager;
+  private reconnectionHandler: WebRTCReconnectionHandler;
+  private serverManager: WebRTCServerManager;
+  private clientManager: WebRTCClientManager;
+  
   private isAdmin = false;
   private userId: string | null = null;
   private organizationId: string | null = null;
+
+  constructor() {
+    this.eventManager = new WebRTCEventManager(
+      this.webrtcConnection,
+      this.connectionManager,
+      this.reconnectionManager,
+      this.autoReconnectionManager,
+      this.ipChangeManager,
+      this.eventHandler,
+      this.isAdmin
+    );
+
+    this.reconnectionHandler = new WebRTCReconnectionHandler(
+      this.webrtcConnection,
+      this.connectionManager,
+      this.reconnectionManager,
+      this.offerManager,
+      this.ipChangeManager,
+      this.isAdmin
+    );
+
+    this.serverManager = new WebRTCServerManager(
+      this.webrtcConnection,
+      this.connectionManager,
+      this.reconnectionManager,
+      this.offerManager,
+      this.autoReconnectionManager,
+      this.ipChangeManager
+    );
+
+    this.clientManager = new WebRTCClientManager(
+      this.webrtcConnection,
+      this.connectionManager,
+      this.reconnectionManager,
+      this.offerManager
+    );
+
+    this.setupEventManagerCallbacks();
+  }
+
+  private setupEventManagerCallbacks(): void {
+    this.eventManager.onSendUpdatedOfferToAllClients = (newIP: string) => 
+      this.reconnectionHandler.sendUpdatedOfferToAllClients(newIP);
+    
+    this.eventManager.onSendUpdatedOfferToClient = (clientId: string) => 
+      this.reconnectionHandler.sendUpdatedOfferToClient(clientId);
+    
+    this.eventManager.onAttemptReconnection = (peerId: string) => 
+      this.reconnectionHandler.attemptReconnection(peerId);
+    
+    this.eventManager.getLastServerOffer = () => 
+      this.offerManager.getLastServerOffer();
+    
+    this.eventManager.organizationId = this.organizationId;
+  }
 
   async createServerOffer(organizationId: string, organizationName: string): Promise<WebRTCServerOffer> {
     this.isAdmin = true;
     this.organizationId = organizationId;
     this.userId = `admin-${organizationId}-${Date.now()}`;
     
-    this.connectionManager.setAsServer(true);
-    this.reconnectionManager.setAsAdmin(true);
+    this.updateManagerStates();
     
-    console.log('WebRTC: Creating server offer for organization:', organizationId);
-    
-    const connection = this.webrtcConnection.createConnection();
-    
-    // Server creates data channel for each client
-    const dataChannel = this.webrtcConnection.createDataChannel('location', {
-      ordered: true
-    });
-    
-    this.setupConnectionHandlers();
-    this.setupIPChangeHandling();
-
-    // Initialize server state for auto-reconnection
-    this.autoReconnectionManager.initializeServerState(organizationId, organizationName, this.userId);
-
-    const serverOffer = await this.offerManager.createServerOffer(
-      this.webrtcConnection,
+    const serverOffer = await this.serverManager.createServerOffer(
       organizationId,
       organizationName,
-      this.userId,
-      this.ipChangeManager.getCurrentIPSync()
+      this.userId
     );
-
-    // Save offer for auto-reconnection
-    this.autoReconnectionManager.getStoredState();
-
-    // Try to auto-reconnect to previous clients
-    setTimeout(async () => {
-      await this.attemptAutoReconnectionToClients();
-    }, 1000);
+    
+    this.setupConnectionHandlers();
+    this.eventManager.setupIPChangeHandling();
 
     return serverOffer;
-  }
-
-  private async attemptAutoReconnectionToClients(): Promise<void> {
-    console.log('Attempting auto-reconnection to previous clients...');
-    
-    const reconnected = await this.autoReconnectionManager.attemptAutoReconnection(
-      this.webrtcConnection,
-      this.offerManager,
-      this.connectionManager
-    );
-
-    if (reconnected) {
-      console.log('Auto-reconnection initiated successfully');
-      
-      // Dispatch event to notify UI
-      const event = new CustomEvent('webrtc-auto-reconnection-started', {
-        detail: { reconnectedClients: this.autoReconnectionManager.getStoredState()?.clients.length || 0 }
-      });
-      window.dispatchEvent(event);
-    }
   }
 
   async connectToServer(offerData: WebRTCServerOffer, userId: string, userName: string): Promise<void> {
@@ -90,135 +113,26 @@ class WebRTCService {
     this.userId = userId;
     this.organizationId = offerData.organizationId;
     
-    this.connectionManager.setAsServer(false);
-    this.reconnectionManager.setAsAdmin(false);
-    this.offerManager.setLastServerOffer(offerData);
+    this.updateManagerStates();
     
-    console.log('WebRTC: Connecting to server');
-    
-    const connection = this.webrtcConnection.createConnection();
+    await this.clientManager.connectToServer(offerData, userId, userName);
     
     this.setupConnectionHandlers();
-    this.setupIPChangeHandling();
+    this.eventManager.setupIPChangeHandling();
+  }
 
-    await this.webrtcConnection.setRemoteDescription(offerData.offer);
-    await this.webrtcConnection.createAnswer();
+  private updateManagerStates(): void {
+    // Update the event manager's isAdmin state
+    (this.eventManager as any).isAdmin = this.isAdmin;
+    (this.eventManager as any).organizationId = this.organizationId;
     
-    // Process pending ICE candidates
-    await this.webrtcConnection.processPendingIceCandidates();
-
-    // Add server as peer
-    this.connectionManager.addPeer({
-      id: offerData.adminId,
-      name: `Server-${offerData.organizationName}`,
-      organizationId: offerData.organizationId,
-      connection: connection,
-      status: 'connecting',
-      lastSeen: Date.now()
-    });
+    // Update reconnection handler's isAdmin state
+    (this.reconnectionHandler as any).isAdmin = this.isAdmin;
   }
 
   private setupConnectionHandlers(): void {
-    const connection = this.webrtcConnection.getConnection();
-    if (!connection) return;
-
-    this.eventHandler.setupConnectionEvents(connection, {
-      onIceCandidate: (candidate) => {
-        this.webrtcConnection.addPendingIceCandidate(candidate);
-        console.log('ICE candidate generated');
-        
-        const peers = this.connectionManager.getConnectedPeers();
-        peers.forEach(peer => {
-          this.connectionManager.sendIceCandidate(peer.id, candidate);
-        });
-      },
-      
-      onConnectionStateChange: (state) => {
-        if (state === 'connected') {
-          const peers = this.connectionManager.getConnectedPeers();
-          peers.forEach(peer => {
-            this.reconnectionManager.markReconnectionSuccess(peer.id);
-            
-            // Save successful client connection for auto-reconnection
-            if (this.isAdmin) {
-              this.autoReconnectionManager.saveClientConnection(
-                peer.id,
-                peer.name,
-                peer.organizationId
-              );
-            }
-          });
-          
-          this.ipChangeManager.setConnectionInstability(false);
-          console.log('Successfully connected to peer');
-        } else if (state === 'disconnected' || state === 'failed') {
-          this.handleConnectionLoss();
-        }
-      },
-      
-      onDataChannel: (channel) => {
-        if (this.offerManager.getLastServerOffer()) {
-          this.connectionManager.setupDataChannel(channel, this.offerManager.getLastServerOffer()!.adminId);
-        }
-      }
-    });
-
+    this.eventManager.setupConnectionHandlers();
     this.setupSignalingHandler();
-  }
-
-  private setupIPChangeHandling(): void {
-    this.ipChangeManager.startMonitoring();
-    
-    this.ipChangeManager.onIPChange((event: IPChangeEvent) => {
-      this.handleIPChangeEvent(event);
-    });
-    
-    this.reconnectionManager.onReconnectionStateChange((peerId, state) => {
-      console.log(`Reconnection state changed for ${peerId}: ${state}`);
-      
-      if (state === 'success') {
-        this.ipChangeManager.setConnectionInstability(false);
-      } else if (state === 'attempting') {
-        this.ipChangeManager.setConnectionInstability(true);
-      } else if (state === 'failed') {
-        this.notifyConnectionLost(peerId);
-      }
-    });
-  }
-
-  private async handleIPChangeEvent(event: IPChangeEvent): Promise<void> {
-    console.log('Handling IP change event:', event);
-    
-    if (event.source === 'local') {
-      await this.handleLocalIPChange(event);
-    } else if (event.source === 'peer' && event.peerId) {
-      await this.handlePeerIPChange(event.peerId, event.oldIP, event.newIP);
-    }
-  }
-
-  private async handleLocalIPChange(event: IPChangeEvent): Promise<void> {
-    console.log('Local IP changed from', event.oldIP, 'to', event.newIP);
-    
-    this.connectionManager.notifyIpChange(event.newIP);
-    
-    if (this.isAdmin) {
-      await this.sendUpdatedOfferToAllClients(event.newIP);
-    } else {
-      await this.handleClientIPChange();
-    }
-  }
-
-  private async handlePeerIPChange(peerId: string, oldIP: string, newIP: string): Promise<void> {
-    console.log(`Peer ${peerId} IP changed from ${oldIP} to ${newIP}`);
-    
-    if (this.isAdmin && this.reconnectionManager.shouldInitiateReconnection(peerId, 'ip-change')) {
-      const attemptNumber = this.reconnectionManager.startReconnectionAttempt(peerId, 'ip-change');
-      const delay = this.reconnectionManager.getDelayForAttempt(attemptNumber);
-      
-      setTimeout(async () => {
-        await this.sendUpdatedOfferToClient(peerId);
-      }, delay);
-    }
   }
 
   private setupSignalingHandler(): void {
@@ -265,127 +179,20 @@ class WebRTCService {
     }
   }
 
-  private async sendUpdatedOfferToAllClients(newIP: string): Promise<void> {
-    try {
-      console.log('Sending updated offer to all clients due to IP change to:', newIP);
-      
-      const newServerOffer = await this.offerManager.createUpdatedOffer(
-        this.webrtcConnection, 
-        newIP, 
-        { iceRestart: true }
-      );
-      
-      if (!newServerOffer) return;
-      
-      const connectedPeers = this.connectionManager.getConnectedPeers();
-      connectedPeers.forEach(peer => {
-        if (this.reconnectionManager.shouldInitiateReconnection(peer.id, 'ip-change')) {
-          this.reconnectionManager.startReconnectionAttempt(peer.id, 'ip-change');
-          this.connectionManager.sendNewOffer(peer.id, newServerOffer);
-        }
-      });
-      
-    } catch (error) {
-      console.error('Failed to send updated offer to clients:', error);
-    }
-  }
-
-  private async sendUpdatedOfferToClient(clientId: string): Promise<void> {
-    try {
-      console.log('Sending updated offer to client:', clientId);
-      
-      const newServerOffer = await this.offerManager.createUpdatedOffer(
-        this.webrtcConnection,
-        this.ipChangeManager.getCurrentIPSync(),
-        { iceRestart: true }
-      );
-      
-      if (newServerOffer) {
-        this.connectionManager.sendNewOffer(clientId, newServerOffer);
-      }
-      
-    } catch (error) {
-      console.error('Failed to send updated offer to client:', error);
-    }
-  }
-
-  private async handleClientIPChange(): Promise<void> {
-    console.log('Client IP changed, waiting for admin response...');
-    
-    setTimeout(() => {
-      const connectedPeers = this.connectionManager.getConnectedPeers();
-      if (connectedPeers.length === 0 && this.offerManager.getLastServerOffer()) {
-        console.log('No admin response, attempting client-side reconnection...');
-        this.handleConnectionLoss();
-      }
-    }, 10000);
-  }
-
-  private handleConnectionLoss(): void {
-    const peers = this.connectionManager.getConnectedPeers();
-    
-    peers.forEach(peer => {
-      if (this.reconnectionManager.shouldInitiateReconnection(peer.id, 'connection-lost')) {
-        const attemptNumber = this.reconnectionManager.startReconnectionAttempt(peer.id, 'connection-lost');
-        const delay = this.reconnectionManager.getDelayForAttempt(attemptNumber);
-        
-        setTimeout(async () => {
-          await this.attemptReconnection(peer.id);
-        }, delay);
-      }
-    });
-  }
-
-  private async attemptReconnection(peerId: string): Promise<void> {
-    try {
-      console.log('Attempting reconnection for peer:', peerId);
-      
-      const newServerOffer = await this.offerManager.createUpdatedOffer(
-        this.webrtcConnection,
-        this.ipChangeManager.getCurrentIPSync(),
-        { iceRestart: true }
-      );
-      
-      if (this.isAdmin && newServerOffer) {
-        this.connectionManager.sendNewOffer(peerId, newServerOffer);
-      }
-      
-      console.log('Reconnection attempt initiated for:', peerId);
-      
-    } catch (error) {
-      console.error('Reconnection attempt failed for', peerId, error);
-      this.reconnectionManager.markReconnectionFailed(peerId);
-    }
-  }
-
-  private notifyConnectionLost(peerId?: string): void {
-    console.log('Connection permanently lost for peer:', peerId);
-    
-    const event = new CustomEvent('webrtc-connection-lost', {
-      detail: {
-        isAdmin: this.isAdmin,
-        organizationId: this.organizationId,
-        peerId: peerId,
-        reconnectionState: peerId ? this.reconnectionManager.getReconnectionState(peerId) : null
-      }
-    });
-    window.dispatchEvent(event);
-  }
-
   // Public API methods
   requestLocationFromClient(clientId: string): void {
     if (!this.isAdmin) return;
-    this.connectionManager.requestLocationUpdate(clientId);
+    this.serverManager.requestLocationFromClient(clientId);
   }
 
   requestLocationFromAllClients(): void {
     if (!this.isAdmin) return;
-    this.connectionManager.requestLocationFromAllClients();
+    this.serverManager.requestLocationFromAllClients();
   }
 
   sendLocationUpdate(locationData: any): void {
     if (this.isAdmin) return;
-    this.connectionManager.sendLocationUpdate(locationData);
+    this.clientManager.sendLocationUpdate(locationData);
   }
 
   onLocationUpdate(callback: (userId: string, location: any) => void): void {
@@ -435,31 +242,22 @@ class WebRTCService {
   disconnect(): void {
     this.ipChangeManager.stopMonitoring();
     this.reconnectionManager.clearAllReconnections();
-    this.autoReconnectionManager.deactivateServer();
+    this.serverManager.deactivateServer();
     this.webrtcConnection.close();
     this.connectionManager.clearPeers();
     this.offerManager.clearLastServerOffer();
   }
 
   async forceReconnect(): Promise<void> {
-    const peers = this.connectionManager.getConnectedPeers();
-    
-    peers.forEach(peer => {
-      this.reconnectionManager.clearReconnectionAttempt(peer.id);
-    });
-    
-    await this.handleConnectionLoss();
+    await this.reconnectionHandler.forceReconnect();
   }
 
-  // New method to check for auto-reconnection capability
   canAutoReconnect(): boolean {
-    return this.isAdmin && this.autoReconnectionManager.getStoredState() !== null;
+    return this.isAdmin && this.serverManager.canAutoReconnect();
   }
 
-  // New method to get stored client count
   getStoredClientCount(): number {
-    const state = this.autoReconnectionManager.getStoredState();
-    return state?.clients.length || 0;
+    return this.serverManager.getStoredClientCount();
   }
 }
 
