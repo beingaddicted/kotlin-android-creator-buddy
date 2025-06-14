@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,6 @@ export const PerformanceDashboard = () => {
     const channel = new BroadcastChannel('performance-metrics');
 
     channel.onmessage = (e) => {
-      // Ensure data is stringified to prevent type errors
       setLogs(prev => [...prev, JSON.stringify(e.data)]);
     };
 

@@ -1,7 +1,7 @@
 
 import '@testing-library/jest-dom';
 import { setupServer } from 'msw/node';
-import { rest } from 'msw';
+import { http, HttpResponse } from 'msw';
 
 // Mock Supabase client
 export const mockSupabase = {
@@ -40,8 +40,8 @@ export const mockSupabase = {
 
 // MSW server for API mocking
 export const server = setupServer(
-  rest.post('*/auth/v1/token', (req, res, ctx) => {
-    return res(ctx.json({ access_token: 'mock-token', user: { id: '123' } }));
+  http.post('*/auth/v1/token', () => {
+    return HttpResponse.json({ access_token: 'mock-token', user: { id: '123' } });
   })
 );
 
