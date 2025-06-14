@@ -3,10 +3,11 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, QrCode, Users, Building2, MapPin, Check, X, UserPlus } from "lucide-react";
+import { ArrowLeft, Plus, QrCode, Users, Building2, MapPin, Check, X, UserPlus, CreditCard } from "lucide-react";
 import { OrganizationManager } from "./admin/OrganizationManager";
 import { QRGenerator } from "./admin/QRGenerator";
 import { MemberTracker } from "./admin/MemberTracker";
+import { BillingManager } from "./admin/BillingManager";
 import { webRTCService } from "@/services/WebRTCService";
 import { toast } from "sonner";
 import { JoinRequests, JoinRequest } from "./admin/JoinRequests";
@@ -16,7 +17,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
-  const [activeSection, setActiveSection] = useState<'overview' | 'organizations' | 'qr' | 'tracking'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'organizations' | 'qr' | 'tracking' | 'billing'>('overview');
   const [organizations] = useState([
     { id: '1', name: 'Sales Team', memberCount: 12, active: 8 },
     { id: '2', name: 'Field Operations', memberCount: 25, active: 20 },
@@ -86,12 +87,14 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
         return <QRGenerator organizations={organizations} />;
       case 'tracking':
         return <MemberTracker organizations={organizations} />;
+      case 'billing':
+        return <BillingManager organizations={organizations} />;
       default:
         return (
           <div className="space-y-6">
             <JoinRequests joinRequests={joinRequests} onApproval={handleApproval} />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <Card className="hover:shadow-lg transition-shadow">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Total Organizations</CardTitle>
@@ -126,6 +129,19 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
                     {organizations.reduce((sum, org) => sum + org.active, 0)}
                   </div>
                   <p className="text-xs text-muted-foreground">Currently trackable</p>
+                </CardContent>
+              </Card>
+
+              <Card className="hover:shadow-lg transition-shadow">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Monthly Cost</CardTitle>
+                  <CreditCard className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-blue-600">
+                    ${((organizations.reduce((sum, org) => sum + org.memberCount, 0) * 10) / 100).toFixed(2)}
+                  </div>
+                  <p className="text-xs text-muted-foreground">$0.10 per member</p>
                 </CardContent>
               </Card>
             </div>
@@ -164,7 +180,8 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
               { id: 'overview', label: 'Overview', icon: Building2 },
               { id: 'organizations', label: 'Organizations', icon: Building2 },
               { id: 'qr', label: 'QR Generator', icon: QrCode },
-              { id: 'tracking', label: 'Live Tracking', icon: MapPin }
+              { id: 'tracking', label: 'Live Tracking', icon: MapPin },
+              { id: 'billing', label: 'Billing', icon: CreditCard }
             ].map((item) => (
               <button
                 key={item.id}

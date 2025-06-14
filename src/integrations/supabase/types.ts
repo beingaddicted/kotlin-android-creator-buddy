@@ -9,6 +9,60 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      billing_history: {
+        Row: {
+          amount_cents: number
+          billing_period_end: string
+          billing_period_start: string
+          created_at: string
+          id: string
+          member_count: number
+          organization_id: string | null
+          payment_method: string
+          payment_status: string
+          subscription_id: string | null
+        }
+        Insert: {
+          amount_cents: number
+          billing_period_end: string
+          billing_period_start: string
+          created_at?: string
+          id?: string
+          member_count: number
+          organization_id?: string | null
+          payment_method: string
+          payment_status?: string
+          subscription_id?: string | null
+        }
+        Update: {
+          amount_cents?: number
+          billing_period_end?: string
+          billing_period_start?: string
+          created_at?: string
+          id?: string
+          member_count?: number
+          organization_id?: string | null
+          payment_method?: string
+          payment_status?: string
+          subscription_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_history_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_history_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "organization_subscriptions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       locations: {
         Row: {
           accuracy: number | null
@@ -70,6 +124,56 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "organization_members_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_subscriptions: {
+        Row: {
+          created_at: string
+          current_period_end: string | null
+          current_period_start: string | null
+          google_play_subscription_id: string | null
+          id: string
+          member_count: number
+          monthly_cost_cents: number
+          organization_id: string | null
+          status: string
+          stripe_subscription_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_period_end?: string | null
+          current_period_start?: string | null
+          google_play_subscription_id?: string | null
+          id?: string
+          member_count?: number
+          monthly_cost_cents?: number
+          organization_id?: string | null
+          status?: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_period_end?: string | null
+          current_period_start?: string | null
+          google_play_subscription_id?: string | null
+          id?: string
+          member_count?: number
+          monthly_cost_cents?: number
+          organization_id?: string | null
+          status?: string
+          stripe_subscription_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_subscriptions_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
