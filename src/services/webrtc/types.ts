@@ -1,6 +1,6 @@
 
 export interface WebRTCMessage {
-  type: 'location' | 'join-org' | 'member-status' | 'location-request';
+  type: 'location' | 'join-org' | 'member-status' | 'location-request' | 'mesh-data';
   data: any;
   userId?: string;
   organizationId?: string;
