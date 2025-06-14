@@ -6,6 +6,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useSupabaseAuth";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { NetworkStatus } from "@/components/NetworkStatus";
+import { HealthCheck } from "@/components/HealthCheck";
+import { PerformanceDashboard } from "@/components/PerformanceDashboard";
 import Index from "./pages/Index";
 import AuthPage from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -34,9 +36,11 @@ function App() {
             <BrowserRouter>
               <div className="min-h-screen bg-background font-sans antialiased">
                 <NetworkStatus />
+                <HealthCheck />
                 <Routes>
                   <Route path="/" element={<Index />} />
                   <Route path="/auth" element={<AuthPage />} />
+                  <Route path="/performance" element={<PerformanceDashboard />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </div>
