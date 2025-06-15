@@ -5,6 +5,8 @@ interface ReconnectionAttempt {
   attempts: number;
   maxAttempts: number;
   lastAttempt: number;
+  isReconnecting: boolean;
+  attempt: number;
 }
 
 export class ReconnectionManager {
@@ -35,7 +37,9 @@ export class ReconnectionManager {
     
     if (existing) {
       existing.attempts++;
+      existing.attempt = existing.attempts;
       existing.lastAttempt = Date.now();
+      existing.isReconnecting = true;
       this.reconnectionAttempts.set(peerId, existing);
       this.onStateChangeCallback?.(peerId, 'attempting');
       return existing.attempts;
@@ -44,8 +48,10 @@ export class ReconnectionManager {
         peerId,
         reason,
         attempts: 1,
+        attempt: 1,
         maxAttempts: 5,
-        lastAttempt: Date.now()
+        lastAttempt: Date.now(),
+        isReconnecting: true
       };
       this.reconnectionAttempts.set(peerId, newAttempt);
       this.onStateChangeCallback?.(peerId, 'attempting');
@@ -60,9 +66,16 @@ export class ReconnectionManager {
 
   markReconnectionFailure(peerId: string): void {
     const attempt = this.reconnectionAttempts.get(peerId);
-    if (attempt && attempt.attempts >= attempt.maxAttempts) {
-      this.onStateChangeCallback?.(peerId, 'failed');
+    if (attempt) {
+      attempt.isReconnecting = false;
+      if (attempt.attempts >= attempt.maxAttempts) {
+        this.onStateChangeCallback?.(peerId, 'failed');
+      }
     }
+  }
+
+  markReconnectionFailed(peerId: string): void {
+    this.markReconnectionFailure(peerId);
   }
 
   getDelayForAttempt(attemptNumber: number): number {
@@ -73,6 +86,10 @@ export class ReconnectionManager {
     this.reconnectionAttempts.delete(peerId);
   }
 
+  clearReconnectionAttempt(peerId: string): void {
+    this.clearReconnection(peerId);
+  }
+
   clearAllReconnections(): void {
     this.reconnectionAttempts.clear();
   }
@@ -81,7 +98,23 @@ export class ReconnectionManager {
     return this.reconnectionAttempts.get(peerId) || null;
   }
 
+  getReconnectionState(peerId: string): ReconnectionAttempt {
+    return this.reconnectionAttempts.get(peerId) || {
+      peerId,
+      reason: 'none',
+      attempts: 0,
+      attempt: 0,
+      maxAttempts: 5,
+      lastAttempt: 0,
+      isReconnecting: false
+    };
+  }
+
   getAllReconnectionStatuses(): Map<string, ReconnectionAttempt> {
+    return new Map(this.reconnectionAttempts);
+  }
+
+  getAllReconnectionStates(): Map<string, ReconnectionAttempt> {
     return new Map(this.reconnectionAttempts);
   }
 }

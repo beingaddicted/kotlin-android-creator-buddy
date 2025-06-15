@@ -5,6 +5,11 @@ export class ConnectionManager {
   private peers = new Map<string, PeerConnection>();
   private onLocationUpdateCallback?: (userId: string, locationData: any) => void;
   private onPeerStatusUpdateCallback?: (peers: PeerConnection[]) => void;
+  private isServer = false;
+
+  setAsServer(isServer: boolean): void {
+    this.isServer = isServer;
+  }
 
   addPeer(peer: PeerConnection): void {
     this.peers.set(peer.id, peer);
@@ -21,6 +26,10 @@ export class ConnectionManager {
   }
 
   getConnectedPeers(): PeerConnection[] {
+    return Array.from(this.peers.values());
+  }
+
+  getAllPeers(): PeerConnection[] {
     return Array.from(this.peers.values());
   }
 
@@ -53,6 +62,53 @@ export class ConnectionManager {
         console.error('Failed to send message to peer:', peerId, error);
       }
     }
+  }
+
+  sendLocationUpdate(locationData: any): void {
+    this.peers.forEach((peer) => {
+      if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
+        try {
+          peer.dataChannel.send(JSON.stringify({
+            type: 'location_update',
+            data: locationData,
+            timestamp: Date.now()
+          }));
+        } catch (error) {
+          console.error('Failed to send location update to peer:', peer.id, error);
+        }
+      }
+    });
+  }
+
+  sendNewOffer(peerId: string, offer: any): void {
+    const peer = this.getPeer(peerId);
+    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
+      try {
+        peer.dataChannel.send(JSON.stringify({
+          type: 'new-offer',
+          data: offer,
+          timestamp: Date.now()
+        }));
+      } catch (error) {
+        console.error('Failed to send new offer to peer:', peerId, error);
+      }
+    }
+  }
+
+  notifyIpChange(newIP: string): void {
+    this.peers.forEach((peer) => {
+      if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
+        try {
+          peer.dataChannel.send(JSON.stringify({
+            type: 'ip-change',
+            data: { newIP },
+            timestamp: Date.now()
+          }));
+        } catch (error) {
+          console.error('Failed to notify IP change to peer:', peer.id, error);
+        }
+      }
+    });
   }
 
   onLocationUpdate(callback: (userId: string, locationData: any) => void): void {

@@ -4,6 +4,7 @@ export class WebRTCConnection {
   private dataChannel: RTCDataChannel | null = null;
   private connectionState: RTCPeerConnectionState = 'new';
   private onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
+  private pendingIceCandidates: RTCIceCandidateInit[] = [];
 
   constructor() {
     this.setupPeerConnection();
@@ -27,6 +28,21 @@ export class WebRTCConnection {
     };
   }
 
+  createConnection(): RTCPeerConnection {
+    if (!this.peerConnection) {
+      this.setupPeerConnection();
+    }
+    return this.peerConnection!;
+  }
+
+  getConnection(): RTCPeerConnection | null {
+    return this.peerConnection;
+  }
+
+  getPeerConnection(): RTCPeerConnection | null {
+    return this.peerConnection;
+  }
+
   getConnectionState(): RTCPeerConnectionState {
     return this.connectionState;
   }
@@ -35,18 +51,17 @@ export class WebRTCConnection {
     this.onConnectionStateChange = callback;
   }
 
-  async createOffer(): Promise<RTCSessionDescriptionInit> {
+  async createOffer(options?: RTCOfferOptions): Promise<RTCSessionDescriptionInit> {
     if (!this.peerConnection) throw new Error('Peer connection not available');
     
-    const offer = await this.peerConnection.createOffer();
+    const offer = await this.peerConnection.createOffer(options);
     await this.peerConnection.setLocalDescription(offer);
     return offer;
   }
 
-  async createAnswer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {
+  async createAnswer(): Promise<RTCSessionDescriptionInit> {
     if (!this.peerConnection) throw new Error('Peer connection not available');
     
-    await this.peerConnection.setRemoteDescription(offer);
     const answer = await this.peerConnection.createAnswer();
     await this.peerConnection.setLocalDescription(answer);
     return answer;
@@ -58,8 +73,24 @@ export class WebRTCConnection {
   }
 
   async addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
-    if (!this.peerConnection) throw new Error('Peer connection not available');
+    if (!this.peerConnection) {
+      this.pendingIceCandidates.push(candidate);
+      return;
+    }
     await this.peerConnection.addIceCandidate(candidate);
+  }
+
+  async processPendingIceCandidates(): Promise<void> {
+    if (!this.peerConnection || this.pendingIceCandidates.length === 0) return;
+    
+    for (const candidate of this.pendingIceCandidates) {
+      try {
+        await this.peerConnection.addIceCandidate(candidate);
+      } catch (error) {
+        console.error('Failed to add pending ICE candidate:', error);
+      }
+    }
+    this.pendingIceCandidates = [];
   }
 
   async testConnectivity(): Promise<boolean> {
@@ -84,9 +115,5 @@ export class WebRTCConnection {
     }
     
     this.connectionState = 'closed';
-  }
-
-  getPeerConnection(): RTCPeerConnection | null {
-    return this.peerConnection;
   }
 }

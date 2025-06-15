@@ -1,9 +1,12 @@
 
+import { IPChangeEvent } from './types';
+
 export class IPChangeManager {
   private currentIP: string | null = null;
   private isMonitoring = false;
   private monitoringInterval: NodeJS.Timeout | null = null;
-  private onIPChangeCallback?: (newIP: string, oldIP: string) => void;
+  private onIPChangeCallback?: (event: IPChangeEvent) => void;
+  private connectionInstable = false;
 
   async startMonitoring(): Promise<void> {
     if (this.isMonitoring) return;
@@ -16,7 +19,15 @@ export class IPChangeManager {
       if (newIP && newIP !== this.currentIP) {
         const oldIP = this.currentIP;
         this.currentIP = newIP;
-        this.onIPChangeCallback?.(newIP, oldIP || 'unknown');
+        
+        const event: IPChangeEvent = {
+          source: 'local',
+          oldIP: oldIP || 'unknown',
+          newIP,
+          timestamp: Date.now()
+        };
+        
+        this.onIPChangeCallback?.(event);
       }
     }, 30000); // Check every 30 seconds
   }
@@ -29,7 +40,7 @@ export class IPChangeManager {
     }
   }
 
-  onIPChange(callback: (newIP: string, oldIP: string) => void): void {
+  onIPChange(callback: (event: IPChangeEvent) => void): void {
     this.onIPChangeCallback = callback;
   }
 
@@ -47,4 +58,14 @@ export class IPChangeManager {
   getCurrentIPSync(): string {
     return this.currentIP || '';
   }
+
+  setConnectionInstability(instable: boolean): void {
+    this.connectionInstable = instable;
+  }
+
+  isConnectionInstable(): boolean {
+    return this.connectionInstable;
+  }
 }
+
+export { IPChangeEvent };

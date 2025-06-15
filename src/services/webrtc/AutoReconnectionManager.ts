@@ -34,4 +34,8 @@ export class AutoReconnectionManager {
   isCurrentlyAutoReconnecting(): boolean {
     return this.isAutoReconnecting;
   }
+
+  isReconnecting(): boolean {
+    return this.isAutoReconnecting;
+  }
 }

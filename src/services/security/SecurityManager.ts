@@ -1,4 +1,3 @@
-
 import { DeviceAuth, AuthChallenge, AuthResponse } from './DeviceAuth';
 import { SecureStorage } from './SecureStorage';
 import { SecureMessaging } from './SecureMessaging';
@@ -120,6 +119,7 @@ export class SecurityManager {
         type: 'auth-challenge',
         data: challenge,
         timestamp: Date.now(),
+        fromUserId: this.deviceAuth.getCurrentDeviceId() || 'unknown',
         senderDeviceId: this.deviceAuth.getCurrentDeviceId()
       };
 
@@ -214,6 +214,7 @@ export class SecurityManager {
         type: 'auth-response',
         data: response,
         timestamp: Date.now(),
+        fromUserId: this.deviceAuth.getCurrentDeviceId() || 'unknown',
         senderDeviceId: this.deviceAuth.getCurrentDeviceId()
       };
 
@@ -263,6 +264,7 @@ export class SecurityManager {
         type: 'secure-message',
         data: secureMessage,
         timestamp: Date.now(),
+        fromUserId: this.deviceAuth.getCurrentDeviceId() || 'unknown',
         encrypted: true,
         senderDeviceId: this.deviceAuth.getCurrentDeviceId()
       };

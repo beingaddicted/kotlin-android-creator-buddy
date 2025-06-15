@@ -10,15 +10,15 @@ export class WebRTCStatusManager {
   }
 
   isCurrentlyReconnecting(): boolean {
-    const allStates = this.core.reconnectionManager.getAllReconnectionStates();
+    const allStates = this.core.reconnectionManager.getAllReconnectionStatuses();
     return allStates.size > 0 || this.core.autoReconnectionManager.isReconnecting();
   }
 
   getReconnectAttempts(): number {
-    const allStates = this.core.reconnectionManager.getAllReconnectionStates();
+    const allStates = this.core.reconnectionManager.getAllReconnectionStatuses();
     if (allStates.size === 0) return 0;
 
-    return Math.max(...Array.from(allStates.values()).map(state => state.attempt));
+    return Math.max(...Array.from(allStates.values()).map(state => state.attempts));
   }
 
   getDetailedReconnectionStatus(): Map<string, { isReconnecting: boolean; attempt: number; maxAttempts: number }> {

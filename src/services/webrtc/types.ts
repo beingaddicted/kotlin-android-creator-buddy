@@ -41,3 +41,11 @@ export interface SignalingData {
   fromPeerId: string;
   toPeerId?: string;
 }
+
+export interface IPChangeEvent {
+  source: 'local' | 'peer';
+  oldIP: string;
+  newIP: string;
+  peerId?: string;
+  timestamp: number;
+}
