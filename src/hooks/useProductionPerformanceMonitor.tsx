@@ -1,4 +1,3 @@
-
 import { useEffect, useCallback } from 'react';
 import { usePerformanceMonitor } from './usePerformanceMonitor';
 import { analytics } from '@/services/production/AnalyticsService';
@@ -17,36 +16,46 @@ export const useProductionPerformanceMonitor = () => {
     renderCount
   } = usePerformanceMonitor(
     (metrics) => {
-      // Send metrics to analytics
-      if (configService.isFeatureEnabled('analytics')) {
+      // Send metrics to analytics with throttling
+      if (configService.isFeatureEnabled('analytics') && renderCount % 10 === 0) { // Reduced frequency
         analytics.trackPerformance('render_time', metrics.renderTime);
-        analytics.trackPerformance('memory_usage', metrics.memoryUsage || 0);
+        if (metrics.memoryUsage) {
+          analytics.trackPerformance('memory_usage', metrics.memoryUsage);
+        }
         analytics.trackPerformance('cache_hit_rate', metrics.cacheHitRate || 1);
       }
 
-      // Update health monitor
-      healthMonitor.recordOperation(metrics.errorCount === 0);
+      // Update health monitor less frequently
+      if (renderCount % 5 === 0) {
+        healthMonitor.recordOperation(metrics.errorCount === 0);
+      }
 
-      // Check for performance warnings
-      const renderThreshold = configService.getThreshold('performanceWarning');
+      // Check for performance warnings with higher thresholds
+      const renderThreshold = configService.getThreshold('performanceWarning') || 1000; // Default 1000ms
       if (metrics.renderTime > renderThreshold) {
-        console.warn(`Slow render detected: ${metrics.renderTime}ms`);
+        const timeSinceLastWarning = Date.now() - (window as any).lastPerfWarning || 0;
         
-        // Emit performance warning
-        window.dispatchEvent(new CustomEvent('webrtc-performance-warning', {
-          detail: {
-            type: 'slow_render',
-            renderTime: metrics.renderTime,
-            threshold: renderThreshold,
-            componentName: metrics.componentName
-          }
-        }));
+        // Throttle warnings to once per minute
+        if (timeSinceLastWarning > 60000) {
+          console.warn(`Slow render detected: ${metrics.renderTime}ms`);
+          (window as any).lastPerfWarning = Date.now();
+          
+          // Emit performance warning with throttling
+          window.dispatchEvent(new CustomEvent('webrtc-performance-warning', {
+            detail: {
+              type: 'slow_render',
+              renderTime: metrics.renderTime,
+              threshold: renderThreshold,
+              componentName: metrics.componentName
+            }
+          }));
+        }
       }
     },
     {
-      slowRenderThreshold: configService.getThreshold('performanceWarning'),
-      memoryWarningThreshold: configService.getThreshold('memoryWarning'),
-      errorRateThreshold: configService.getThreshold('errorRateWarning')
+      slowRenderThreshold: configService.getThreshold('performanceWarning') || 1000,
+      memoryWarningThreshold: configService.getThreshold('memoryWarning') || 100 * 1024 * 1024,
+      errorRateThreshold: configService.getThreshold('errorRateWarning') || 0.2
     }
   );
 

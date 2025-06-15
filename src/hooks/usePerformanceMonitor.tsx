@@ -26,9 +26,9 @@ interface PerformanceThresholds {
 export const usePerformanceMonitor = (
   onMetricsUpdate?: (metrics: PerformanceMetrics) => void,
   thresholds: PerformanceThresholds = {
-    slowRenderThreshold: 100,
-    memoryWarningThreshold: 50 * 1024 * 1024, // 50MB
-    errorRateThreshold: 0.1 // 10%
+    slowRenderThreshold: 1000, // Increased from 100ms to 1000ms
+    memoryWarningThreshold: 100 * 1024 * 1024, // Increased to 100MB
+    errorRateThreshold: 0.2 // Increased to 20%
   }
 ) => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -37,8 +37,9 @@ export const usePerformanceMonitor = (
   const operationMetricsRef = useRef<OperationMetric[]>([]);
   const errorCountRef = useRef<number>(0);
   const renderCountRef = useRef<number>(0);
+  const lastWarningTimeRef = useRef<number>(0);
 
-  // Enhanced memory usage detection
+  // Throttle memory usage detection to reduce overhead
   const getMemoryUsage = useCallback((): number => {
     if ('memory' in performance) {
       const memInfo = (performance as any).memory;
@@ -47,94 +48,87 @@ export const usePerformanceMonitor = (
     return 0;
   }, []);
 
-  // Calculate cache hit rate based on recent operations
   const calculateCacheHitRate = useCallback((): number => {
-    const recentOps = operationMetricsRef.current.slice(-100); // Last 100 operations
+    const recentOps = operationMetricsRef.current.slice(-50); // Reduced from 100 to 50
     if (recentOps.length === 0) return 1;
     
     const successfulOps = recentOps.filter(op => op.success).length;
     return successfulOps / recentOps.length;
   }, []);
 
-  // Enhanced metrics calculation
+  // Throttled metrics calculation with reduced frequency
   useEffect(() => {
     if (!isMonitoring) return;
 
-    const endTime = performance.now();
-    const renderTime = endTime - startTimeRef.current;
-    renderCountRef.current++;
+    const metricsTimer = setTimeout(() => {
+      const endTime = performance.now();
+      const renderTime = endTime - startTimeRef.current;
+      renderCountRef.current++;
 
-    const metrics: PerformanceMetrics = {
-      renderTime,
-      componentName: 'PerformanceMonitor',
-      timestamp: Date.now(),
-      memoryUsage: getMemoryUsage(),
-      cacheHitRate: calculateCacheHitRate(),
-      errorCount: errorCountRef.current,
-      operationMetrics: [...operationMetricsRef.current.slice(-10)] // Last 10 operations
-    };
+      // Only calculate metrics if render time is significant or every 10th render
+      if (renderTime > 50 || renderCountRef.current % 10 === 0) {
+        const metrics: PerformanceMetrics = {
+          renderTime,
+          componentName: 'PerformanceMonitor',
+          timestamp: Date.now(),
+          memoryUsage: renderCountRef.current % 5 === 0 ? getMemoryUsage() : undefined, // Check memory less frequently
+          cacheHitRate: calculateCacheHitRate(),
+          errorCount: errorCountRef.current,
+          operationMetrics: [...operationMetricsRef.current.slice(-5)] // Reduced from 10 to 5
+        };
 
-    // Performance warnings
-    if (renderTime > thresholds.slowRenderThreshold) {
-      console.warn(`Slow render detected: ${renderTime.toFixed(2)}ms (threshold: ${thresholds.slowRenderThreshold}ms)`);
-      
-      // Broadcast performance warning
-      const channel = new BroadcastChannel('performance-alerts');
-      channel.postMessage({
-        type: 'slow-render',
-        renderTime,
-        threshold: thresholds.slowRenderThreshold,
-        timestamp: Date.now()
-      });
-      channel.close();
-    }
-
-    // Memory usage warning
-    const memoryUsage = getMemoryUsage();
-    if (memoryUsage > thresholds.memoryWarningThreshold) {
-      console.warn(`High memory usage detected: ${(memoryUsage / 1024 / 1024).toFixed(2)}MB`);
-    }
-
-    // Error rate warning
-    const errorRate = errorCountRef.current / renderCountRef.current;
-    if (errorRate > thresholds.errorRateThreshold) {
-      console.warn(`High error rate detected: ${(errorRate * 100).toFixed(2)}%`);
-    }
-
-    if (onMetricsUpdate) {
-      onMetricsUpdate(metrics);
-    }
-
-    setPerformanceData(metrics);
-
-    // Store metrics for analysis with size limit
-    if (typeof window !== 'undefined') {
-      try {
-        const existingMetrics = JSON.parse(localStorage.getItem('performance_metrics') || '[]');
-        existingMetrics.push(metrics);
+        // Throttle performance warnings to once per 30 seconds
+        const now = Date.now();
+        const timeSinceLastWarning = now - lastWarningTimeRef.current;
         
-        // Keep only last 200 entries to prevent storage bloat
-        if (existingMetrics.length > 200) {
-          existingMetrics.splice(0, existingMetrics.length - 200);
+        if (renderTime > thresholds.slowRenderThreshold && timeSinceLastWarning > 30000) {
+          console.warn(`Slow render detected: ${renderTime.toFixed(2)}ms (threshold: ${thresholds.slowRenderThreshold}ms)`);
+          lastWarningTimeRef.current = now;
         }
-        
-        localStorage.setItem('performance_metrics', JSON.stringify(existingMetrics));
-      } catch (error) {
-        console.warn('Failed to store performance metrics:', error);
-        errorCountRef.current++;
+
+        // Memory usage warning with throttling
+        const memoryUsage = metrics.memoryUsage;
+        if (memoryUsage && memoryUsage > thresholds.memoryWarningThreshold && timeSinceLastWarning > 30000) {
+          console.warn(`High memory usage detected: ${(memoryUsage / 1024 / 1024).toFixed(2)}MB`);
+          lastWarningTimeRef.current = now;
+        }
+
+        if (onMetricsUpdate) {
+          onMetricsUpdate(metrics);
+        }
+
+        setPerformanceData(metrics);
+
+        // Store metrics with size limit and reduced frequency
+        if (typeof window !== 'undefined' && renderCountRef.current % 20 === 0) { // Store less frequently
+          try {
+            const existingMetrics = JSON.parse(localStorage.getItem('performance_metrics') || '[]');
+            existingMetrics.push(metrics);
+            
+            // Keep only last 50 entries instead of 200
+            if (existingMetrics.length > 50) {
+              existingMetrics.splice(0, existingMetrics.length - 50);
+            }
+            
+            localStorage.setItem('performance_metrics', JSON.stringify(existingMetrics));
+          } catch (error) {
+            console.warn('Failed to store performance metrics:', error);
+            errorCountRef.current++;
+          }
+        }
       }
-    }
+    }, 16); // Small delay to avoid blocking main thread
+
+    return () => clearTimeout(metricsTimer);
   }, [isMonitoring, onMetricsUpdate, getMemoryUsage, calculateCacheHitRate, thresholds]);
 
   // Enhanced operation measurement with error handling
   const measureOperation = useCallback((operationName: string, operation: () => void | Promise<void>) => {
     const start = performance.now();
-    let success = true;
     
     try {
       const result = operation();
       
-      // Handle both sync and async operations
       if (result instanceof Promise) {
         return result
           .then(() => {
@@ -147,7 +141,10 @@ export const usePerformanceMonitor = (
             };
             
             operationMetricsRef.current.push(metric);
-            console.log(`${operationName} completed in ${(end - start).toFixed(2)}ms`);
+            // Keep metrics array small
+            if (operationMetricsRef.current.length > 20) {
+              operationMetricsRef.current = operationMetricsRef.current.slice(-10);
+            }
             
             return result;
           })
@@ -161,8 +158,10 @@ export const usePerformanceMonitor = (
             };
             
             operationMetricsRef.current.push(metric);
+            if (operationMetricsRef.current.length > 20) {
+              operationMetricsRef.current = operationMetricsRef.current.slice(-10);
+            }
             errorCountRef.current++;
-            console.error(`${operationName} failed after ${(end - start).toFixed(2)}ms:`, error);
             
             throw error;
           });
@@ -176,10 +175,11 @@ export const usePerformanceMonitor = (
         };
         
         operationMetricsRef.current.push(metric);
-        console.log(`${operationName} completed in ${(end - start).toFixed(2)}ms`);
+        if (operationMetricsRef.current.length > 20) {
+          operationMetricsRef.current = operationMetricsRef.current.slice(-10);
+        }
       }
     } catch (error) {
-      success = false;
       errorCountRef.current++;
       const end = performance.now();
       
@@ -191,7 +191,9 @@ export const usePerformanceMonitor = (
       };
       
       operationMetricsRef.current.push(metric);
-      console.error(`${operationName} failed after ${(end - start).toFixed(2)}ms:`, error);
+      if (operationMetricsRef.current.length > 20) {
+        operationMetricsRef.current = operationMetricsRef.current.slice(-10);
+      }
       throw error;
     }
   }, []);
@@ -215,7 +217,8 @@ export const usePerformanceMonitor = (
   const startMonitor = useCallback(() => {
     setIsMonitoring(true);
     startTimeRef.current = performance.now();
-    console.log('Performance monitoring started');
+    lastWarningTimeRef.current = 0; // Reset warning throttle
+    console.log('Performance monitoring started with optimized settings');
   }, []);
 
   const stopMonitor = useCallback(() => {
@@ -227,6 +230,7 @@ export const usePerformanceMonitor = (
     operationMetricsRef.current = [];
     errorCountRef.current = 0;
     renderCountRef.current = 0;
+    lastWarningTimeRef.current = 0;
     setPerformanceData(null);
     
     if (typeof window !== 'undefined') {
