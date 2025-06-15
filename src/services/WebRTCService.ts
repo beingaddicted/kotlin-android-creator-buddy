@@ -1,3 +1,4 @@
+
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { SignalingMessage } from './webrtc/SignalingService';
 import { WebRTCServiceCore } from './webrtc/WebRTCServiceCore';
@@ -14,6 +15,9 @@ import { MeshNetworkCoordinator } from './webrtc/MeshNetworkCoordinator';
 import { MultiAdminManager } from './webrtc/MultiAdminManager';
 import { WebRTCServiceIntegration } from './webrtc/WebRTCServiceIntegration';
 import { AndroidWebRTCOptimizer } from './webrtc/AndroidWebRTCOptimizer';
+import { WebRTCDiagnosticManager } from './webrtc/WebRTCDiagnosticManager';
+import { WebRTCFeatureManager } from './webrtc/WebRTCFeatureManager';
+import { WebRTCConnectionManager } from './webrtc/WebRTCConnectionManager';
 
 class WebRTCService {
   private core: WebRTCServiceCore;
@@ -29,6 +33,9 @@ class WebRTCService {
   private multiAdminManager: MultiAdminManager;
   private integration: WebRTCServiceIntegration;
   private androidOptimizer: AndroidWebRTCOptimizer;
+  private diagnosticManager: WebRTCDiagnosticManager;
+  private featureManager: WebRTCFeatureManager;
+  private connectionManager: WebRTCConnectionManager;
   private currentDeviceId: string;
 
   constructor() {
@@ -47,6 +54,28 @@ class WebRTCService {
     this.meshCoordinator = new MeshNetworkCoordinator();
     this.multiAdminManager = new MultiAdminManager();
     this.androidOptimizer = AndroidWebRTCOptimizer.getInstance();
+
+    // Initialize specialized managers
+    this.diagnosticManager = new WebRTCDiagnosticManager(
+      this.compatibilityManager,
+      this.degradationManager,
+      this.persistentStorage,
+      this.meshCoordinator,
+      this.multiAdminManager,
+      this.currentDeviceId
+    );
+
+    this.featureManager = new WebRTCFeatureManager(
+      this.compatibilityManager,
+      this.degradationManager
+    );
+
+    this.connectionManager = new WebRTCConnectionManager(
+      this.core,
+      this.managers,
+      this.persistentStorage,
+      this.currentDeviceId
+    );
 
     // Initialize integration layer
     this.integration = new WebRTCServiceIntegration(
@@ -197,7 +226,7 @@ class WebRTCService {
       // Only connect if we're not an admin and not the server itself
       if (!DeviceIDManager.isAdmin() && serverId !== this.currentDeviceId) {
         console.log('WebRTCService: Connecting to temporary server:', serverId);
-        await this.connectToTemporaryServer(serverOffer);
+        await this.connectionManager.connectToTemporaryServer(serverOffer);
       }
     });
 
@@ -226,40 +255,16 @@ class WebRTCService {
       rtcConfig = this.androidOptimizer.optimizeForAndroid();
     }
 
-    // Initialize device info as admin
-    const deviceInfo: DeviceInfo = {
-      deviceId: this.currentDeviceId,
-      deviceType: 'admin',
-      deviceName: organizationName,
-      organizationId,
-      isTemporaryServer: false,
-      lastSeen: Date.now(),
-      capabilities: ['location.view', 'admin.manage']
-    };
-    this.integration.updateDeviceInfo(deviceInfo);
-
-    this.core.updateStates(true, this.currentDeviceId, organizationId);
-    this.managers.updateManagerStates(true, organizationId);
     this.broadcastManager.setOrganizationId(organizationId);
 
     // Start mesh coordination
     this.meshCoordinator.startCoordination(organizationId);
     this.multiAdminManager.startMultiAdminCoordination(organizationId);
 
-    const serverOffer = await this.managers.serverManager.createServerOffer(
-      organizationId,
-      organizationName,
-      this.currentDeviceId
-    );
+    const serverOffer = await this.connectionManager.createServerOffer(organizationId, organizationName);
 
     this.setupConnectionHandlers();
     this.managers.eventManager.setupIPChangeHandling();
-
-    // Test connectivity
-    const canConnect = await this.core.webrtcConnection.testConnectivity();
-    if (!canConnect) {
-      console.warn('TURN server connectivity test failed, connections may be limited');
-    }
 
     // Broadcast admin presence so clients reconnect
     if (this.core.isAdmin) {
@@ -275,60 +280,24 @@ class WebRTCService {
       throw new Error('WebRTC is not supported in this browser. Please use a modern browser.');
     }
 
-    // Initialize device info as client
-    const deviceInfo: DeviceInfo = {
-      deviceId: this.currentDeviceId,
-      deviceType: 'client',
-      deviceName: userName,
-      organizationId: offerData.organizationId,
-      isTemporaryServer: false,
-      lastSeen: Date.now(),
-      capabilities: ['location.share']
-    };
-    this.integration.updateDeviceInfo(deviceInfo);
-
-    this.core.updateStates(false, this.currentDeviceId, offerData.organizationId);
-    this.managers.updateManagerStates(false, offerData.organizationId);
     this.broadcastManager.setOrganizationId(offerData.organizationId);
 
     // Start mesh coordination
     this.meshCoordinator.startCoordination(offerData.organizationId);
 
-    // Store connection data for persistence
-    this.persistentStorage.storeConnection({
-      peerId: offerData.adminId,
-      peerName: offerData.organizationName,
-      organizationId: offerData.organizationId,
-      lastOfferData: offerData
-    });
-
     try {
-      await this.managers.clientManager.connectToServer(offerData, this.currentDeviceId, userName);
-      
-      // Mark successful connection
-      this.persistentStorage.updateConnectionAttempt(offerData.adminId, true);
+      await this.connectionManager.connectToServer(offerData, userId, userName);
       
       this.setupConnectionHandlers();
       this.managers.eventManager.setupIPChangeHandling();
 
       // Notify mesh coordinator about successful connection
-      this.meshCoordinator.addDeviceToMesh(deviceInfo);
-    } catch (error) {
-      // Mark failed connection
-      this.persistentStorage.updateConnectionAttempt(offerData.adminId, false);
-      throw error;
-    }
-  }
-
-  private async connectToTemporaryServer(offerData: WebRTCServerOffer): Promise<void> {
-    try {
       const deviceInfo = DeviceIDManager.getDeviceInfo();
-      if (!deviceInfo) throw new Error('No device info available');
-
-      await this.managers.clientManager.connectToServer(offerData, this.currentDeviceId, deviceInfo.deviceName);
-      console.log('WebRTCService: Successfully connected to temporary server');
+      if (deviceInfo) {
+        this.meshCoordinator.addDeviceToMesh(deviceInfo);
+      }
     } catch (error) {
-      console.error('WebRTCService: Failed to connect to temporary server:', error);
+      throw error;
     }
   }
 
@@ -392,6 +361,21 @@ class WebRTCService {
     }
   }
 
+  private handlePermanentConnectionLoss(event: CustomEvent): void {
+    if (!this.canPerformAdminActions()) {
+        console.log('Client connection permanently lost, starting enhanced reconnection strategy.');
+        
+        // Set degradation to minimal while attempting reconnection
+        this.degradationManager.setDegradationLevel('minimal');
+        
+        this.longPollManager.startLongPollReconnect(
+          () => this.getConnectionStatus(),
+          () => this.forceReconnect()
+        );
+    }
+  }
+
+  // Public API methods
   approveJoinRequest(peerId: string, approved: boolean): void {
     // Only admins can approve join requests
     if (!this.canPerformAdminActions()) return;
@@ -444,6 +428,7 @@ class WebRTCService {
     });
   }
 
+  // Status and state methods
   getConnectedPeers(): PeerConnection[] {
     return this.statusManager.getConnectedPeers();
   }
@@ -464,43 +449,13 @@ class WebRTCService {
     return this.statusManager.getDetailedReconnectionStatus();
   }
 
-  private handlePermanentConnectionLoss(event: CustomEvent): void {
-    if (!this.canPerformAdminActions()) {
-        console.log('Client connection permanently lost, starting enhanced reconnection strategy.');
-        
-        // Set degradation to minimal while attempting reconnection
-        this.degradationManager.setDegradationLevel('minimal');
-        
-        this.longPollManager.startLongPollReconnect(
-          () => this.getConnectionStatus(),
-          () => this.forceReconnect()
-        );
-    }
-  }
-
-  // Enhanced feature availability checks
+  // Feature availability checks
   isFeatureAvailable(feature: 'realTimeLocation' | 'videoCapabilities' | 'fileTransfer' | 'voiceChat' | 'instantMessaging'): boolean {
-    // Check browser capability first
-    if (feature === 'videoCapabilities' && !this.compatibilityManager.isFeatureSupported('mediaDevices')) {
-      return false;
-    }
-    
-    // Check degradation level
-    return this.degradationManager.isFeatureAvailable(feature);
+    return this.featureManager.isFeatureAvailable(feature);
   }
 
   getFeatureMessage(feature: 'realTimeLocation' | 'videoCapabilities' | 'fileTransfer' | 'voiceChat' | 'instantMessaging'): string {
-    // Check browser limitations first
-    const browserLimitations = this.compatibilityManager.getLimitations();
-    const relevantLimitation = browserLimitations.find(limitation => 
-      limitation.toLowerCase().includes(feature.toLowerCase())
-    );
-    
-    if (relevantLimitation) {
-      return relevantLimitation;
-    }
-    
-    return this.degradationManager.getFeatureMessage(feature);
+    return this.featureManager.getFeatureMessage(feature);
   }
 
   // Device and permission methods
@@ -532,67 +487,30 @@ class WebRTCService {
     return this.integration.getMeshNetworkStatus();
   }
 
-  // New diagnostic methods
+  // Diagnostic methods
   getBrowserCompatibility() {
-    return this.compatibilityManager.getBrowserInfo();
+    return this.diagnosticManager.getBrowserCompatibility();
   }
 
   getConnectionHealth() {
     const healthMonitor = this.core.webrtcConnection.getHealthMonitor();
-    return healthMonitor ? healthMonitor.getLastHealth() : null;
+    return this.diagnosticManager.getConnectionHealth(healthMonitor);
   }
 
   getDegradationLevel() {
-    return this.degradationManager.getCurrentLevel();
+    return this.diagnosticManager.getDegradationLevel();
   }
 
   getErrorHistory() {
-    return this.core.webrtcConnection.getErrorManager().getErrorHistory();
+    return this.diagnosticManager.getErrorHistory(this.core.webrtcConnection.getErrorManager());
   }
 
   getStoredConnections() {
-    return this.persistentStorage.getStoredConnections();
+    return this.diagnosticManager.getStoredConnections();
   }
 
   generateDiagnosticReport(): string {
-    const compatibility = this.compatibilityManager.generateCompatibilityReport();
-    const degradation = this.degradationManager.getCurrentLevel();
-    const errors = this.core.webrtcConnection.getErrorManager().getRecurringErrors();
-    const connections = this.persistentStorage.getStoredConnections();
-    const meshStatus = this.meshCoordinator.getNetworkStatus();
-    const adminDevices = this.multiAdminManager.getAllAdmins();
-    
-    let report = compatibility;
-    report += `\n\nService Status:\n`;
-    report += `==============\n`;
-    report += `Device ID: ${this.currentDeviceId}\n`;
-    report += `Device Type: ${DeviceIDManager.getDeviceInfo()?.deviceType || 'unknown'}\n`;
-    report += `Is Temporary Server: ${DeviceIDManager.isTemporaryServer()}\n`;
-    report += `Degradation Level: ${degradation.level}\n`;
-    report += `Active Features: ${Object.entries(degradation.features).filter(([,v]) => v).map(([k]) => k).join(', ')}\n`;
-    
-    report += `\n\nMesh Network Status:\n`;
-    report += `===================\n`;
-    report += `Has Active Admin: ${meshStatus.hasActiveAdmin}\n`;
-    report += `Temporary Server: ${meshStatus.temporaryServerId || 'None'}\n`;
-    report += `Connected Devices: ${meshStatus.connectedDevices.length}\n`;
-    
-    report += `\n\nAdmin Devices:\n`;
-    report += `==============\n`;
-    adminDevices.forEach(admin => {
-      report += `  • ${admin.deviceId} (${admin.isPrimary ? 'Primary' : 'Secondary'})\n`;
-    });
-    
-    if (errors.length > 0) {
-      report += `\nRecurring Errors:\n`;
-      errors.forEach(error => {
-        report += `  • ${error.code}: ${error.count} occurrences\n`;
-      });
-    }
-    
-    report += `\nStored Connections: ${connections.length}\n`;
-    
-    return report;
+    return this.diagnosticManager.generateDiagnosticReport(this.core.webrtcConnection.getErrorManager());
   }
 
   // Enhanced state management
@@ -602,32 +520,7 @@ class WebRTCService {
 
   // Connection management
   async forceReconnect(): Promise<void> {
-    console.log('WebRTCService: Force reconnecting...');
-    
-    try {
-      // Clear current connections
-      this.core.connectionManager.clearPeers();
-      
-      // Get stored connection data
-      const connections = this.persistentStorage.getStoredConnections();
-      
-      if (connections.length > 0) {
-        const lastConnection = connections[0]; // Get most recent
-        if (lastConnection.lastOfferData) {
-          const deviceInfo = this.getCurrentDeviceInfo();
-          if (deviceInfo) {
-            await this.connectToServer(
-              lastConnection.lastOfferData,
-              deviceInfo.deviceId,
-              deviceInfo.deviceName
-            );
-          }
-        }
-      }
-    } catch (error) {
-      console.error('WebRTCService: Force reconnect failed:', error);
-      throw error;
-    }
+    return this.connectionManager.forceReconnect();
   }
 
   disconnect(): void {
@@ -643,13 +536,11 @@ class WebRTCService {
 
   // Enhanced reconnection capabilities
   canAutoReconnect(): boolean {
-    const connections = this.persistentStorage.getStoredConnections();
-    return connections.length > 0;
+    return this.connectionManager.canAutoReconnect();
   }
 
   getStoredClientCount(): number {
-    const connections = this.persistentStorage.getStoredConnections();
-    return connections.length;
+    return this.connectionManager.getStoredClientCount();
   }
 }
 
