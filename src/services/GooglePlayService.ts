@@ -1,21 +1,25 @@
 
 import { Capacitor } from '@capacitor/core';
+import { supabase } from '@/integrations/supabase/client';
 
 let Billing: any = null;
 let Purchase: any = null;
 
 // Dynamically import billing only on native platforms
-if (Capacitor.isNativePlatform()) {
-  try {
-    const billingModule = await import('@capacitor-community/billing');
-    Billing = billingModule.Billing;
-    Purchase = billingModule.Purchase;
-  } catch (error) {
-    console.warn('Billing plugin not available:', error);
+const initializeBilling = async () => {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const billingModule = await import('@capacitor-community/billing');
+      Billing = billingModule.Billing;
+      Purchase = billingModule.Purchase;
+      return true;
+    } catch (error) {
+      console.warn('Billing plugin not available:', error);
+      return false;
+    }
   }
-}
-
-import { supabase } from '@/integrations/supabase/client';
+  return false;
+};
 
 export interface Product {
   productId: string;
@@ -41,7 +45,8 @@ export class GooglePlayService {
   async initialize(): Promise<boolean> {
     if (this.isInitialized) return true;
     
-    if (!Capacitor.isNativePlatform() || !Billing) {
+    const billingAvailable = await initializeBilling();
+    if (!billingAvailable || !Billing) {
       console.warn('Google Play Billing not available on this platform');
       return false;
     }
