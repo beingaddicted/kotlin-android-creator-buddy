@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +6,7 @@ import { ArrowLeft, Plus, QrCode, Users, Building2, MapPin, Check, X, UserPlus, 
 import { OrganizationManager } from "./admin/OrganizationManager";
 import { QRGenerator } from "./admin/QRGenerator";
 import { MemberTracker } from "./admin/MemberTracker";
-import { BillingManager } from "./admin/BillingManager";
+import { BillingManager } from "./billing/BillingManager";
 import { webRTCService } from "@/services/WebRTCService";
 import { toast } from "sonner";
 import { JoinRequests, JoinRequest } from "./admin/JoinRequests";
@@ -26,41 +25,108 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
 
   useEffect(() => {
-    // Load pending invites from local storage to re-populate UI on refresh
-    const pendingInvites = JSON.parse(localStorage.getItem('pendingInvites') || '[]');
-    // This is just for display logic, real requests come over WebRTC
-    
-    const handleJoinRequest = (event: any) => {
-      const { peerId, data } = event.detail;
-      if (data.type === 'join_request') {
-        const { payload } = data;
-        
-        // Validate invite code
-        const pendingInvites = JSON.parse(localStorage.getItem('pendingInvites') || '[]');
-        const inviteIndex = pendingInvites.findIndex((i: any) => i.inviteCode === payload.qrData.inviteCode);
+    console.log('AdminDashboard: Setting up join request listeners');
 
-        if (inviteIndex > -1) {
-          toast.info(`New join request from ${payload.userData.name} for ${payload.qrData.organizationName}`);
-          setJoinRequests(prev => [...prev, { peerId, ...payload }]);
+    // Listen for incoming WebRTC messages
+    const handleWebRTCMessage = (event: any) => {
+      console.log('AdminDashboard: Received WebRTC message:', event.detail);
+      const { message, fromPeerId } = event.detail;
+      
+      if (message.type === 'join_request') {
+        console.log('AdminDashboard: Processing join request from:', fromPeerId);
+        const { userData, qrData } = message.data;
+        
+        // Validate invite code exists in pending invites
+        const pendingInvites = JSON.parse(localStorage.getItem('pendingInvites') || '[]');
+        const inviteExists = pendingInvites.some((invite: any) => invite.inviteCode === qrData.inviteCode);
+        
+        if (inviteExists) {
+          const newRequest: JoinRequest = {
+            peerId: fromPeerId,
+            userData,
+            qrData
+          };
+          
+          console.log('AdminDashboard: Adding join request:', newRequest);
+          setJoinRequests(prev => {
+            // Avoid duplicates
+            const exists = prev.some(req => req.qrData.inviteCode === qrData.inviteCode);
+            if (exists) return prev;
+            return [...prev, newRequest];
+          });
+          
+          toast.info(`New join request from ${userData.name} for ${qrData.organizationName}`);
         } else {
-          console.warn("Received join request with invalid or used invite code:", payload.qrData.inviteCode);
+          console.warn('AdminDashboard: Invalid invite code:', qrData.inviteCode);
+          // Send rejection back to user
+          webRTCService.sendToPeer(fromPeerId, {
+            type: 'join_response',
+            status: 'denied',
+            reason: 'Invalid or expired invite code'
+          });
         }
       }
     };
 
-    window.addEventListener('webrtc-location-updated', handleJoinRequest);
+    // Listen for location updates that might contain join requests
+    const handleLocationUpdate = (event: any) => {
+      console.log('AdminDashboard: Location update event:', event.detail);
+      const { peerId, data } = event.detail;
+      
+      // Check if this is actually a join request disguised as location update
+      if (data && data.type === 'join_request') {
+        console.log('AdminDashboard: Found join request in location update');
+        handleWebRTCMessage({ detail: { message: data, fromPeerId: peerId } });
+      }
+    };
+
+    // Listen for direct join request events
+    const handleJoinRequestEvent = (event: any) => {
+      console.log('AdminDashboard: Direct join request event:', event.detail);
+      const { peerId, userData, qrData } = event.detail;
+      
+      if (userData && qrData) {
+        handleWebRTCMessage({ 
+          detail: { 
+            message: { type: 'join_request', data: { userData, qrData } }, 
+            fromPeerId: peerId 
+          } 
+        });
+      }
+    };
+
+    // Add multiple event listeners to catch join requests
+    window.addEventListener('webrtc-message-received', handleWebRTCMessage);
+    window.addEventListener('webrtc-location-updated', handleLocationUpdate);
+    window.addEventListener('webrtc-join-request', handleJoinRequestEvent);
+
+    // Check for any existing pending requests on component mount
+    const checkExistingRequests = () => {
+      const pendingInvites = JSON.parse(localStorage.getItem('pendingInvites') || '[]');
+      console.log('AdminDashboard: Checking existing pending invites:', pendingInvites);
+    };
+
+    checkExistingRequests();
 
     return () => {
-      window.removeEventListener('webrtc-location-updated', handleJoinRequest);
+      window.removeEventListener('webrtc-message-received', handleWebRTCMessage);
+      window.removeEventListener('webrtc-location-updated', handleLocationUpdate);
+      window.removeEventListener('webrtc-join-request', handleJoinRequestEvent);
     };
   }, []);
 
   const handleApproval = (request: JoinRequest, approved: boolean) => {
+    console.log('AdminDashboard: Processing approval:', { request, approved });
+    
     // Send response back to user
     const response = {
       type: 'join_response',
-      status: approved ? 'approved' : 'denied'
+      status: approved ? 'approved' : 'denied',
+      organizationId: request.qrData.organizationId,
+      organizationName: request.qrData.organizationName
     };
+    
+    console.log('AdminDashboard: Sending response to peer:', request.peerId, response);
     webRTCService.sendToPeer(request.peerId, response);
 
     // Remove invite code to make it one-time use
@@ -72,10 +138,10 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
     setJoinRequests(prev => prev.filter(r => r.qrData.inviteCode !== request.qrData.inviteCode));
     
     if (approved) {
-      toast.success(`${request.userData.name} has been approved.`);
+      toast.success(`${request.userData.name} has been approved to join ${request.qrData.organizationName}.`);
       // Here you would typically add the user to your member list
     } else {
-      toast.error(`${request.userData.name} has been denied.`);
+      toast.error(`${request.userData.name} has been denied access to ${request.qrData.organizationName}.`);
     }
   };
 

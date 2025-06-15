@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { UserPlus, ArrowLeft } from "lucide-react";
 import { QRData } from "@/services/QRService";
+import { webRTCService } from "@/services/WebRTCService";
 
 interface UserData {
   name: string;
@@ -62,8 +63,40 @@ export const UserRegistration = ({ qrData, onJoinRequest, onBack }: UserRegistra
 
       console.log('User requesting to join:', registrationData);
       
-      // Send join request to admin
+      // Send join request via WebRTC to admin
+      const joinRequestMessage = {
+        type: 'join_request',
+        data: {
+          userData: registrationData,
+          qrData: qrData
+        },
+        timestamp: Date.now()
+      };
+
+      console.log('Sending join request message:', joinRequestMessage);
+
+      // Try to send via WebRTC service
+      const adminConnected = webRTCService.broadcastMessage(joinRequestMessage);
+      
+      if (!adminConnected) {
+        console.log('No admin connected via WebRTC, dispatching event');
+        // Fallback: dispatch event that admin might be listening for
+        const event = new CustomEvent('webrtc-join-request', {
+          detail: {
+            peerId: userId,
+            userData: registrationData,
+            qrData: qrData
+          }
+        });
+        window.dispatchEvent(event);
+      }
+      
+      // Also call the original callback
       onJoinRequest(registrationData, qrData);
+      
+      // Show waiting message
+      alert('Join request sent! Please wait for admin approval.');
+      
     } catch (error) {
       console.error('Registration failed:', error);
       alert('Registration failed. Please try again.');
