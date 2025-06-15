@@ -9,6 +9,9 @@ import { WebRTCStatusManager } from './webrtc/WebRTCStatusManager';
 import { GracefulDegradationManager } from './webrtc/GracefulDegradationManager';
 import { BrowserCompatibilityManager } from './webrtc/BrowserCompatibilityManager';
 import { PersistentConnectionStorage } from './webrtc/PersistentConnectionStorage';
+import { DeviceIDManager, DeviceInfo } from './webrtc/DeviceIDManager';
+import { MeshNetworkCoordinator } from './webrtc/MeshNetworkCoordinator';
+import { MultiAdminManager } from './webrtc/MultiAdminManager';
 
 class WebRTCService {
   private core: WebRTCServiceCore;
@@ -20,8 +23,14 @@ class WebRTCService {
   private degradationManager: GracefulDegradationManager;
   private compatibilityManager: BrowserCompatibilityManager;
   private persistentStorage: PersistentConnectionStorage;
+  private meshCoordinator: MeshNetworkCoordinator;
+  private multiAdminManager: MultiAdminManager;
+  private currentDeviceId: string;
 
   constructor() {
+    // Initialize device ID first
+    this.currentDeviceId = DeviceIDManager.getOrCreateDeviceId();
+    
     this.core = new WebRTCServiceCore();
     this.managers = new WebRTCManagerCollection(this.core);
     this.broadcastManager = new WebRTCBroadcastManager();
@@ -31,8 +40,11 @@ class WebRTCService {
     this.degradationManager = new GracefulDegradationManager();
     this.compatibilityManager = new BrowserCompatibilityManager();
     this.persistentStorage = new PersistentConnectionStorage();
+    this.meshCoordinator = new MeshNetworkCoordinator();
+    this.multiAdminManager = new MultiAdminManager();
 
     this.setupEnhancedMonitoring();
+    this.setupMeshNetworking();
     this.managers.setupEventManagerCallbacks(this.core);
 
     // Listen for admin online broadcasts (if not admin)
@@ -87,20 +99,77 @@ class WebRTCService {
     });
   }
 
+  private setupMeshNetworking(): void {
+    // Setup mesh network coordination
+    this.meshCoordinator.onPromoteToTemporaryServer(async () => {
+      console.log('WebRTCService: Promoting to temporary server');
+      
+      // Get current organization from device info
+      const deviceInfo = DeviceIDManager.getDeviceInfo();
+      if (!deviceInfo) throw new Error('No device info available');
+      
+      return await this.createServerOffer(deviceInfo.organizationId, `Temp Server ${this.currentDeviceId.slice(-4)}`);
+    });
+
+    this.meshCoordinator.onDemoteFromTemporaryServer(() => {
+      console.log('WebRTCService: Demoting from temporary server');
+      this.managers.serverManager.deactivateServer();
+    });
+
+    // Setup multi-admin coordination
+    this.multiAdminManager.onAdminStatusUpdate((admins) => {
+      const event = new CustomEvent('webrtc-admin-status-update', { detail: { admins } });
+      window.dispatchEvent(event);
+    });
+
+    // Listen for temporary server offers
+    window.addEventListener('webrtc-temporary-server-offer', async (event: CustomEvent) => {
+      const { serverOffer, serverId } = event.detail;
+      
+      // Only connect if we're not an admin and not the server itself
+      if (!DeviceIDManager.isAdmin() && serverId !== this.currentDeviceId) {
+        console.log('WebRTCService: Connecting to temporary server:', serverId);
+        await this.connectToTemporaryServer(serverOffer);
+      }
+    });
+
+    // Listen for admin reconnection
+    window.addEventListener('webrtc-admin-reconnected', () => {
+      console.log('WebRTCService: Admin reconnected, switching back to admin server');
+      this.handleAdminReconnection();
+    });
+  }
+
   async createServerOffer(organizationId: string, organizationName: string): Promise<WebRTCServerOffer> {
     // Check browser compatibility first
     if (!this.compatibilityManager.isFeatureSupported('webrtc')) {
       throw new Error('WebRTC is not supported in this browser. Please use a modern browser.');
     }
 
-    this.core.updateStates(true, `admin-${organizationId}-${Date.now()}`, organizationId);
+    // Initialize device info as admin
+    const deviceInfo: DeviceInfo = {
+      deviceId: this.currentDeviceId,
+      deviceType: 'admin',
+      deviceName: organizationName,
+      organizationId,
+      isTemporaryServer: false,
+      lastSeen: Date.now(),
+      capabilities: ['location.view', 'admin.manage']
+    };
+    DeviceIDManager.setDeviceInfo(deviceInfo);
+
+    this.core.updateStates(true, this.currentDeviceId, organizationId);
     this.managers.updateManagerStates(true, organizationId);
     this.broadcastManager.setOrganizationId(organizationId);
+
+    // Start mesh coordination
+    this.meshCoordinator.startCoordination(organizationId);
+    this.multiAdminManager.startMultiAdminCoordination(organizationId);
 
     const serverOffer = await this.managers.serverManager.createServerOffer(
       organizationId,
       organizationName,
-      this.core.userId!
+      this.currentDeviceId
     );
 
     this.setupConnectionHandlers();
@@ -126,9 +195,24 @@ class WebRTCService {
       throw new Error('WebRTC is not supported in this browser. Please use a modern browser.');
     }
 
-    this.core.updateStates(false, userId, offerData.organizationId);
+    // Initialize device info as client
+    const deviceInfo: DeviceInfo = {
+      deviceId: this.currentDeviceId,
+      deviceType: 'client',
+      deviceName: userName,
+      organizationId: offerData.organizationId,
+      isTemporaryServer: false,
+      lastSeen: Date.now(),
+      capabilities: ['location.share']
+    };
+    DeviceIDManager.setDeviceInfo(deviceInfo);
+
+    this.core.updateStates(false, this.currentDeviceId, offerData.organizationId);
     this.managers.updateManagerStates(false, offerData.organizationId);
     this.broadcastManager.setOrganizationId(offerData.organizationId);
+
+    // Start mesh coordination
+    this.meshCoordinator.startCoordination(offerData.organizationId);
 
     // Store connection data for persistence
     this.persistentStorage.storeConnection({
@@ -139,18 +223,44 @@ class WebRTCService {
     });
 
     try {
-      await this.managers.clientManager.connectToServer(offerData, userId, userName);
+      await this.managers.clientManager.connectToServer(offerData, this.currentDeviceId, userName);
       
       // Mark successful connection
       this.persistentStorage.updateConnectionAttempt(offerData.adminId, true);
       
       this.setupConnectionHandlers();
       this.managers.eventManager.setupIPChangeHandling();
+
+      // Notify mesh coordinator about successful connection
+      this.meshCoordinator.addDeviceToMesh(deviceInfo);
     } catch (error) {
       // Mark failed connection
       this.persistentStorage.updateConnectionAttempt(offerData.adminId, false);
       throw error;
     }
+  }
+
+  private async connectToTemporaryServer(offerData: WebRTCServerOffer): Promise<void> {
+    try {
+      const deviceInfo = DeviceIDManager.getDeviceInfo();
+      if (!deviceInfo) throw new Error('No device info available');
+
+      await this.managers.clientManager.connectToServer(offerData, this.currentDeviceId, deviceInfo.deviceName);
+      console.log('WebRTCService: Successfully connected to temporary server');
+    } catch (error) {
+      console.error('WebRTCService: Failed to connect to temporary server:', error);
+    }
+  }
+
+  private handleAdminReconnection(): void {
+    // If we were a temporary server, stop serving
+    if (DeviceIDManager.isTemporaryServer()) {
+      this.managers.serverManager.deactivateServer();
+      DeviceIDManager.markAsTemporaryServer(false);
+    }
+
+    // Attempt to reconnect to the admin
+    this.forceReconnect();
   }
 
   private setupConnectionHandlers(): void {
@@ -203,7 +313,8 @@ class WebRTCService {
   }
 
   approveJoinRequest(peerId: string, approved: boolean): void {
-    if (!this.core.isAdmin) return;
+    // Only admins can approve join requests
+    if (!this.canPerformAdminActions()) return;
 
     const message = {
       type: 'join-response',
@@ -214,17 +325,17 @@ class WebRTCService {
   }
 
   requestLocationFromClient(clientId: string): void {
-    if (!this.core.isAdmin) return;
+    if (!this.canPerformAdminActions()) return;
     this.managers.serverManager.requestLocationFromClient(clientId);
   }
 
   requestLocationFromAllClients(): void {
-    if (!this.core.isAdmin) return;
+    if (!this.canPerformAdminActions()) return;
     this.managers.serverManager.requestLocationFromAllClients();
   }
 
   sendToPeer(peerId: string, data: any): void {
-    if (!this.core.isAdmin) {
+    if (!this.canPerformAdminActions()) {
       console.warn('Only admin can send data to a specific peer.');
       return;
     }
@@ -232,12 +343,15 @@ class WebRTCService {
   }
 
   sendLocationUpdate(locationData: any): void {
-    if (this.core.isAdmin) return;
+    if (this.canPerformAdminActions()) return;
     this.managers.clientManager.sendLocationUpdate(locationData);
   }
 
   onLocationUpdate(callback: (userId: string, location: any) => void): void {
-    this.core.connectionManager.onLocationUpdate(callback);
+    // Only admins can receive location updates
+    if (this.canAccessLocationData()) {
+      this.core.connectionManager.onLocationUpdate(callback);
+    }
   }
 
   onPeerStatusUpdate(callback: (peers: PeerConnection[]) => void): void {
@@ -271,7 +385,7 @@ class WebRTCService {
   }
 
   private handlePermanentConnectionLoss(event: CustomEvent): void {
-    if (!this.core.isAdmin) {
+    if (!this.canPerformAdminActions()) {
         console.log('Client connection permanently lost, starting enhanced reconnection strategy.');
         
         // Set degradation to minimal while attempting reconnection
@@ -309,6 +423,35 @@ class WebRTCService {
     return this.degradationManager.getFeatureMessage(feature);
   }
 
+  // Device and permission methods
+  getCurrentDeviceId(): string {
+    return this.currentDeviceId;
+  }
+
+  getCurrentDeviceInfo(): DeviceInfo | null {
+    return DeviceIDManager.getDeviceInfo();
+  }
+
+  canPerformAdminActions(): boolean {
+    return this.multiAdminManager.canPerformAdminActions();
+  }
+
+  canAccessLocationData(): boolean {
+    return this.multiAdminManager.canAccessLocationData();
+  }
+
+  isPrimaryAdmin(): boolean {
+    return this.multiAdminManager.isCurrentDevicePrimary();
+  }
+
+  getAllAdmins(): any[] {
+    return this.multiAdminManager.getAllAdmins();
+  }
+
+  getMeshNetworkStatus(): any {
+    return this.meshCoordinator.getNetworkStatus();
+  }
+
   // New diagnostic methods
   getBrowserCompatibility() {
     return this.compatibilityManager.getBrowserInfo();
@@ -337,12 +480,29 @@ class WebRTCService {
     const degradation = this.degradationManager.getCurrentLevel();
     const errors = this.core.webrtcConnection.getErrorManager().getRecurringErrors();
     const connections = this.persistentStorage.getStoredConnections();
+    const meshStatus = this.meshCoordinator.getNetworkStatus();
+    const adminDevices = this.multiAdminManager.getAllAdmins();
     
     let report = compatibility;
     report += `\n\nService Status:\n`;
     report += `==============\n`;
+    report += `Device ID: ${this.currentDeviceId}\n`;
+    report += `Device Type: ${DeviceIDManager.getDeviceInfo()?.deviceType || 'unknown'}\n`;
+    report += `Is Temporary Server: ${DeviceIDManager.isTemporaryServer()}\n`;
     report += `Degradation Level: ${degradation.level}\n`;
     report += `Active Features: ${Object.entries(degradation.features).filter(([,v]) => v).map(([k]) => k).join(', ')}\n`;
+    
+    report += `\n\nMesh Network Status:\n`;
+    report += `===================\n`;
+    report += `Has Active Admin: ${meshStatus.hasActiveAdmin}\n`;
+    report += `Temporary Server: ${meshStatus.temporaryServerId || 'None'}\n`;
+    report += `Connected Devices: ${meshStatus.connectedDevices.length}\n`;
+    
+    report += `\n\nAdmin Devices:\n`;
+    report += `==============\n`;
+    adminDevices.forEach(admin => {
+      report += `  • ${admin.deviceId} (${admin.isPrimary ? 'Primary' : 'Secondary'})\n`;
+    });
     
     if (errors.length > 0) {
       report += `\nRecurring Errors:\n`;
@@ -363,6 +523,8 @@ class WebRTCService {
     this.broadcastManager.cleanup();
     this.eventListeners.cleanup();
     this.degradationManager.cleanup();
+    this.meshCoordinator.cleanup();
+    this.multiAdminManager.cleanup();
     
     // Reset to full features for next connection
     this.degradationManager.setDegradationLevel('full');
