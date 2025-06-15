@@ -1,30 +1,57 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { googlePlayService } from '@/services/GooglePlayService';
+import { googlePlayService, Product } from '@/services/GooglePlayService';
 import { useSubscription } from '@/hooks/useSubscription';
 import { ShoppingCart, RefreshCw, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
+import { LoadingSpinner } from '../LoadingSpinner';
 
 interface GooglePlayIntegrationProps {
   organizationId: string;
   memberCount: number;
 }
 
+// IMPORTANT: Replace with your actual product ID from Google Play Console
+const GOOGLE_PLAY_PRODUCT_ID = 'your_monthly_subscription_id';
+
 export const GooglePlayIntegration = ({ organizationId, memberCount }: GooglePlayIntegrationProps) => {
-  const { subscription, updateSubscriptionStatus, calculateMonthlyCost } = useSubscription(organizationId);
+  const { subscription, updateSubscriptionStatus } = useSubscription(organizationId);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [isLoadingProduct, setIsLoadingProduct] = useState(true);
+
+  useEffect(() => {
+    const initBilling = async () => {
+      setIsLoadingProduct(true);
+      await googlePlayService.initialize();
+      try {
+        const details = await googlePlayService.getProductDetails(GOOGLE_PLAY_PRODUCT_ID);
+        if (details) {
+          setProduct(details);
+        } else {
+          toast.error('Could not load subscription details from Google Play.');
+        }
+      } catch (error) {
+        console.error("Failed to fetch product details", error);
+        toast.error("Could not load subscription details from Google Play.");
+      } finally {
+        setIsLoadingProduct(false);
+      }
+    };
+    initBilling();
+  }, []);
 
   const handleGooglePlayPurchase = async () => {
     setIsProcessing(true);
     try {
       toast.info('Initiating Google Play purchase...');
       
-      const result = await googlePlayService.purchaseSubscription(organizationId, memberCount);
+      const result = await googlePlayService.purchaseSubscription(GOOGLE_PLAY_PRODUCT_ID);
       
       if (result.success && result.subscriptionId) {
         await updateSubscriptionStatus('active', result.subscriptionId, 'google_play');
@@ -41,18 +68,17 @@ export const GooglePlayIntegration = ({ organizationId, memberCount }: GooglePla
   };
 
   const handleRefreshStatus = async () => {
-    if (!subscription?.google_play_subscription_id) {
-      toast.warning('No Google Play subscription found');
-      return;
-    }
-
     setIsRefreshing(true);
     try {
-      const status = await googlePlayService.refreshSubscriptionStatus(subscription.google_play_subscription_id);
-      
-      if (status.status !== subscription.status) {
-        await updateSubscriptionStatus(status.status);
-        toast.success('Subscription status updated');
+      const purchases = await googlePlayService.refreshSubscriptionStatus();
+      const activePurchase = purchases.find(p => p.sku === GOOGLE_PLAY_PRODUCT_ID);
+
+      if (activePurchase && subscription?.status !== 'active') {
+          await updateSubscriptionStatus('active', activePurchase.orderId || subscription?.google_play_subscription_id, 'google_play');
+          toast.success('Subscription status updated to active.');
+      } else if (!activePurchase && subscription?.status === 'active') {
+          await updateSubscriptionStatus('canceled');
+          toast.info('Subscription no longer active.');
       } else {
         toast.info('Subscription status is up to date');
       }
@@ -64,30 +90,10 @@ export const GooglePlayIntegration = ({ organizationId, memberCount }: GooglePla
     }
   };
 
-  const handleCancelSubscription = async () => {
-    if (!subscription?.google_play_subscription_id) return;
-
-    const confirmed = window.confirm('Are you sure you want to cancel your Google Play subscription?');
-    if (!confirmed) return;
-
-    try {
-      const result = await googlePlayService.cancelSubscription(subscription.google_play_subscription_id);
-      
-      if (result.success) {
-        await updateSubscriptionStatus('canceled');
-        toast.success('Subscription canceled successfully');
-      } else {
-        toast.error(result.error || 'Failed to cancel subscription');
-      }
-    } catch (error) {
-      console.error('Error canceling subscription:', error);
-      toast.error('Failed to cancel subscription');
-    }
+  const handleCancelSubscription = () => {
+    toast.info('To cancel your subscription, please go to the Google Play Store app on your device.');
   };
-
-  const formatCurrency = (cents: number) => `$${(cents / 100).toFixed(2)}`;
-  const monthlyCost = calculateMonthlyCost(memberCount);
-
+  
   return (
     <Card>
       <CardHeader>
@@ -97,99 +103,91 @@ export const GooglePlayIntegration = ({ organizationId, memberCount }: GooglePla
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Subscription Status */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div>
-            <p className="text-sm text-gray-500">Status</p>
-            <Badge variant={subscription?.status === 'active' ? 'default' : 'secondary'}>
-              {subscription?.status || 'Not activated'}
-            </Badge>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500">Members</p>
-            <p className="font-semibold">{memberCount}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500">Monthly Cost</p>
-            <p className="font-semibold">{formatCurrency(monthlyCost)}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500">Payment Method</p>
-            <p className="font-semibold">
-              {subscription?.google_play_subscription_id ? 'Google Play' : 'Not set'}
-            </p>
-          </div>
-        </div>
+        {isLoadingProduct ? <LoadingSpinner /> : (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <p className="text-sm text-gray-500">Status</p>
+                <Badge variant={subscription?.status === 'active' ? 'default' : 'secondary'}>
+                  {subscription?.status || 'Not activated'}
+                </Badge>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Plan</p>
+                <p className="font-semibold">{product?.title || 'Monthly'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Price</p>
+                <p className="font-semibold">{product?.price || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Payment Method</p>
+                <p className="font-semibold">
+                  {subscription?.google_play_subscription_id ? 'Google Play' : 'Not set'}
+                </p>
+              </div>
+            </div>
 
-        {/* Google Play Subscription Info */}
-        {subscription?.google_play_subscription_id && (
-          <Alert>
-            <CheckCircle className="h-4 w-4" />
-            <AlertDescription>
-              Google Play Subscription ID: {subscription.google_play_subscription_id}
-            </AlertDescription>
-          </Alert>
-        )}
+            {subscription?.google_play_subscription_id && (
+              <Alert>
+                <CheckCircle className="h-4 w-4" />
+                <AlertDescription>
+                  Google Play Subscription ID: {subscription.google_play_subscription_id}
+                </AlertDescription>
+              </Alert>
+            )}
 
-        {/* Actions */}
-        <div className="flex flex-wrap gap-3">
-          {subscription?.status !== 'active' && (
-            <Button
-              onClick={handleGooglePlayPurchase}
-              disabled={isProcessing}
-              className="flex items-center space-x-2"
-            >
-              {isProcessing ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <ShoppingCart className="w-4 h-4" />
-              )}
-              <span>{isProcessing ? 'Processing...' : 'Subscribe via Google Play'}</span>
-            </Button>
-          )}
-
-          {subscription?.google_play_subscription_id && (
-            <>
-              <Button
-                variant="outline"
-                onClick={handleRefreshStatus}
-                disabled={isRefreshing}
-                className="flex items-center space-x-2"
-              >
-                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span>Refresh Status</span>
-              </Button>
-
-              {subscription?.status === 'active' && (
+            <div className="flex flex-wrap gap-3">
+              {subscription?.status !== 'active' && product && (
                 <Button
-                  variant="destructive"
-                  onClick={handleCancelSubscription}
+                  onClick={handleGooglePlayPurchase}
+                  disabled={isProcessing}
                   className="flex items-center space-x-2"
                 >
-                  <XCircle className="w-4 h-4" />
-                  <span>Cancel Subscription</span>
+                  {isProcessing ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ShoppingCart className="w-4 h-4" />
+                  )}
+                  <span>{isProcessing ? 'Processing...' : `Subscribe for ${product.price}`}</span>
                 </Button>
               )}
-            </>
-          )}
-        </div>
 
-        {/* Pricing Information */}
-        <Alert>
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>
-            Google Play Store charges $0.10 per month for each active member in your organization. 
-            Current cost: {formatCurrency(monthlyCost)} for {memberCount} members.
-          </AlertDescription>
-        </Alert>
+              {subscription?.google_play_subscription_id && (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={handleRefreshStatus}
+                    disabled={isRefreshing}
+                    className="flex items-center space-x-2"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    <span>Refresh Status</span>
+                  </Button>
 
-        {/* Development Note */}
-        <Alert>
-          <AlertDescription className="text-sm text-gray-600">
-            <strong>Note:</strong> This is a development implementation. In production, you would integrate 
-            with the actual Google Play Billing Library and Google Play Developer API for real transactions.
-          </AlertDescription>
-        </Alert>
+                  {subscription?.status === 'active' && (
+                    <Button
+                      variant="destructive"
+                      onClick={handleCancelSubscription}
+                      className="flex items-center space-x-2"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      <span>Cancel Subscription</span>
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+            
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                Subscriptions are managed through your Google Play account. 
+                {product?.description}
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
       </CardContent>
     </Card>
   );

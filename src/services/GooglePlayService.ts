@@ -1,7 +1,20 @@
 
+import { Billing, Purchase } from '@capacitor-community/billing';
+import { supabase } from '@/integrations/supabase/client';
+
+export interface Product {
+  productId: string;
+  title?: string;
+  description?: string;
+  price?: string;
+  priceAmountMicros?: number;
+  currency?: string;
+}
+
 export class GooglePlayService {
   private static instance: GooglePlayService;
   private isInitialized = false;
+  private products = new Map<string, Product>();
 
   static getInstance(): GooglePlayService {
     if (!GooglePlayService.instance) {
@@ -11,15 +24,11 @@ export class GooglePlayService {
   }
 
   async initialize(): Promise<boolean> {
+    if (this.isInitialized) return true;
     try {
-      // Initialize Google Play Billing
-      // In a real implementation, you would use the Google Play Billing API
-      console.log('Initializing Google Play Billing...');
-      
-      // Simulate initialization
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      await Billing.initialize();
       this.isInitialized = true;
+      console.log('Google Play Billing Initialized');
       return true;
     } catch (error) {
       console.error('Failed to initialize Google Play Billing:', error);
@@ -27,76 +36,66 @@ export class GooglePlayService {
     }
   }
 
-  async purchaseSubscription(organizationId: string, memberCount: number): Promise<{
+  async getProductDetails(productId: string): Promise<Product | undefined> {
+    if (!this.isInitialized) await this.initialize();
+    if (this.products.has(productId)) {
+        return this.products.get(productId);
+    }
+    try {
+      const { products } = await Billing.getProducts({ skus: [productId] });
+      if (products && products.length > 0) {
+        const product = products[0];
+        this.products.set(productId, product);
+        return product;
+      }
+    } catch (error) {
+      console.error('Failed to get product details:', error);
+    }
+    return undefined;
+  }
+
+  async purchaseSubscription(productId: string): Promise<{
     success: boolean;
     subscriptionId?: string;
     error?: string;
   }> {
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
+    if (!this.isInitialized) await this.initialize();
 
     try {
-      // Calculate the subscription cost (10 cents per member)
-      const costCents = memberCount * 10;
+      const purchase = await Billing.purchase({ sku: productId });
       
-      console.log(`Purchasing subscription for organization ${organizationId}`);
-      console.log(`Member count: ${memberCount}, Cost: $${costCents / 100}`);
-      
-      // Simulate Google Play purchase flow
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Generate a mock subscription ID
-      const subscriptionId = `gp_sub_${Date.now()}_${organizationId}`;
-      
-      return {
-        success: true,
-        subscriptionId
-      };
+      const validationResult = await this.validatePurchase(purchase.purchaseToken, purchase.sku);
+
+      if (validationResult.valid) {
+        await Billing.acknowledgePurchase({ token: purchase.purchaseToken });
+        
+        return {
+          success: true,
+          subscriptionId: validationResult.subscriptionData?.orderId || `gp_sub_${Date.now()}`
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Purchase validation failed.'
+        };
+      }
     } catch (error) {
       console.error('Google Play purchase failed:', error);
       return {
         success: false,
-        error: 'Purchase failed. Please try again.'
+        error: 'Purchase failed or cancelled. Please try again.'
       };
     }
   }
 
-  async cancelSubscription(subscriptionId: string): Promise<{
-    success: boolean;
-    error?: string;
-  }> {
+  async refreshSubscriptionStatus(): Promise<Purchase[]> {
+    if (!this.isInitialized) await this.initialize();
     try {
-      console.log(`Canceling subscription: ${subscriptionId}`);
-      
-      // Simulate cancellation
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      return { success: true };
+      const result = await Billing.getPurchases();
+      return result.purchases || [];
     } catch (error) {
-      console.error('Failed to cancel subscription:', error);
-      return {
-        success: false,
-        error: 'Failed to cancel subscription'
-      };
-    }
-  }
-
-  async getSubscriptionStatus(subscriptionId: string): Promise<{
-    status: 'active' | 'expired' | 'canceled';
-    expirationDate?: Date;
-  }> {
-    try {
-      // Simulate status check
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      return {
-        status: 'active',
-        expirationDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
-      };
-    } catch (error) {
-      console.error('Failed to get subscription status:', error);
-      return { status: 'expired' };
+      console.error('Failed to refresh subscription status:', error);
+      return [];
     }
   }
 
@@ -106,49 +105,23 @@ export class GooglePlayService {
     error?: string;
   }> {
     try {
-      console.log(`Validating purchase: ${purchaseToken} for product: ${productId}`);
-      
-      // Simulate validation with Google Play Developer API
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock validation response
-      return {
-        valid: true,
-        subscriptionData: {
-          orderId: `order_${Date.now()}`,
-          purchaseTime: Date.now(),
-          expiryTime: Date.now() + (30 * 24 * 60 * 60 * 1000), // 30 days
-          autoRenewing: true
-        }
-      };
-    } catch (error) {
-      console.error('Failed to validate purchase:', error);
-      return {
-        valid: false,
-        error: 'Purchase validation failed'
-      };
-    }
-  }
+        const { data, error } = await supabase.functions.invoke('google-play-validator', {
+            body: {
+                purchaseToken,
+                productId,
+                packageName: 'app.lovable.bcd1eb8b14f5447a94a2bc357ec4de2b',
+            }
+        });
 
-  async refreshSubscriptionStatus(subscriptionId: string): Promise<{
-    status: 'active' | 'expired' | 'canceled' | 'pending';
-    autoRenewing?: boolean;
-    expirationDate?: Date;
-  }> {
-    try {
-      console.log(`Refreshing subscription status: ${subscriptionId}`);
-      
-      // Simulate API call to Google Play
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      return {
-        status: 'active',
-        autoRenewing: true,
-        expirationDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      };
+        if (error) throw error;
+        
+        return data;
     } catch (error) {
-      console.error('Failed to refresh subscription status:', error);
-      return { status: 'expired' };
+        console.error('Failed to validate purchase via edge function:', error);
+        return {
+            valid: false,
+            error: 'Purchase validation failed'
+        };
     }
   }
 }
