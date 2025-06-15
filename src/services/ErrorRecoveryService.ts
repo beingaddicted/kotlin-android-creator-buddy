@@ -1,4 +1,3 @@
-
 interface ErrorContext {
   component: string;
   operation: string;
@@ -12,6 +11,27 @@ interface RecoveryStrategy {
   condition: (error: Error, context: ErrorContext) => boolean;
   execute: (error: Error, context: ErrorContext) => Promise<boolean>;
   maxRetries: number;
+}
+
+// Extend Window interface to include webRTCService
+declare global {
+  interface Window {
+    webRTCService?: {
+      disconnect?: () => void;
+      getConnectionStatus?: () => string;
+      onLocationUpdate?: (callback: (userId: string, locationData: any) => void) => void;
+      onPeerStatusUpdate?: (callback: (peers: any[]) => void) => void;
+      requestLocationFromAllClients?: () => void;
+      getConnectedPeers?: () => any[];
+      forceReconnect?: () => Promise<void>;
+      canAutoReconnect?: () => boolean;
+      getStoredClientCount?: () => number;
+      isCurrentlyReconnecting?: () => boolean;
+      getReconnectAttempts?: () => number;
+      getDetailedReconnectionStatus?: () => Map<string, any>;
+    };
+    errorRecoveryService?: ErrorRecoveryService;
+  }
 }
 
 export class ErrorRecoveryService {
@@ -44,8 +64,8 @@ export class ErrorRecoveryService {
         try {
           console.log('Attempting WebRTC recovery...');
           
-          // Clear existing connections
-          if (window.webRTCService && typeof window.webRTCService.disconnect === 'function') {
+          // Clear existing connections with proper type checking
+          if (window.webRTCService?.disconnect) {
             window.webRTCService.disconnect();
           }
           
@@ -55,11 +75,16 @@ export class ErrorRecoveryService {
           // Attempt to restore from localStorage
           const lastConnection = localStorage.getItem('last_webrtc_connection');
           if (lastConnection) {
-            const connectionData = JSON.parse(lastConnection);
-            // Trigger reconnection event
-            window.dispatchEvent(new CustomEvent('webrtc-recovery-attempt', {
-              detail: connectionData
-            }));
+            try {
+              const connectionData = JSON.parse(lastConnection);
+              // Trigger reconnection event
+              window.dispatchEvent(new CustomEvent('webrtc-recovery-attempt', {
+                detail: connectionData
+              }));
+            } catch (parseError) {
+              console.warn('Failed to parse stored connection data:', parseError);
+              localStorage.removeItem('last_webrtc_connection');
+            }
           }
           
           return true;
@@ -342,4 +367,4 @@ export class ErrorRecoveryService {
 export const errorRecoveryService = ErrorRecoveryService.getInstance();
 
 // Make it globally available for emergency recovery
-(window as any).errorRecoveryService = errorRecoveryService;
+window.errorRecoveryService = errorRecoveryService;

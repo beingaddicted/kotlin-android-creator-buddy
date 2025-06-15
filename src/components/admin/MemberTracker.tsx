@@ -6,6 +6,7 @@ import { MemberTrackerActions } from "./member-tracker/MemberTrackerActions";
 import { MemberTrackerNotifications } from "./member-tracker/MemberTrackerNotifications";
 import { MemberTrackerContent } from "./member-tracker/MemberTrackerContent";
 import { WebRTCQRGenerator } from "./WebRTCQRGenerator";
+import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 interface Organization {
