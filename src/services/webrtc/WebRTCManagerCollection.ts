@@ -1,4 +1,3 @@
-
 import { WebRTCEventManager } from './WebRTCEventManager';
 import { WebRTCReconnectionHandler } from './WebRTCReconnectionHandler';
 import { WebRTCServerManager } from './WebRTCServerManager';
@@ -26,7 +25,9 @@ export class WebRTCManagerCollection {
       core.webrtcConnection,
       core.connectionManager,
       core.reconnectionManager,
-      core.offerManager
+      core.offerManager,
+      core.ipChangeManager,
+      core.isAdmin
     );
 
     this.serverManager = new WebRTCServerManager(
