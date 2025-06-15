@@ -1,3 +1,4 @@
+
 import { DeviceAuth, AuthChallenge, AuthResponse } from './DeviceAuth';
 import { SecureStorage } from './SecureStorage';
 import { SecureMessaging } from './SecureMessaging';
@@ -150,13 +151,13 @@ export class SecurityManager {
     // Check permissions based on action
     switch (action) {
       case 'join_network':
-        return this.hasPermission('admin.manage');
+        return this.hasPermission('network.manage');
       case 'request_location':
         return this.hasPermission('location.request');
       case 'share_location':
-        return this.hasPermission('location.share');
+        return this.hasPermission('location.view');
       case 'admin_action':
-        return this.hasPermission('admin.manage');
+        return this.hasPermission('admin.promote');
       default:
         return true;
     }
