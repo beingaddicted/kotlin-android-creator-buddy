@@ -1,4 +1,6 @@
 
+import QRCode from 'qrcode';
+
 export interface QRData {
   type: string;
   [key: string]: any;
@@ -46,36 +48,19 @@ export class QRService {
 
       console.log('QRService: Generated QR data:', qrData);
 
-      // Generate a more realistic QR code pattern
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = 256;
-      canvas.height = 256;
-      
-      if (ctx) {
-        // White background
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, 256, 256);
-        
-        // Create a simple QR-like pattern
-        ctx.fillStyle = '#000000';
-        
-        // Corner patterns
-        this.drawCornerPattern(ctx, 10, 10);
-        this.drawCornerPattern(ctx, 200, 10);
-        this.drawCornerPattern(ctx, 10, 200);
-        
-        // Data pattern (pseudo-random based on invite code)
-        this.drawDataPattern(ctx, inviteCode);
-        
-        // Add text for debugging
-        ctx.fillStyle = '#000000';
-        ctx.font = '10px Arial';
-        ctx.fillText(organizationName.substring(0, 15), 60, 130);
-      }
+      // Generate actual QR code using qrcode library
+      const qrDataString = JSON.stringify(qrData);
+      const qrDataURL = await QRCode.toDataURL(qrDataString, {
+        width: 256,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        },
+        errorCorrectionLevel: 'M'
+      });
 
-      const qrDataURL = canvas.toDataURL();
-      console.log('QRService: Generated QR code data URL length:', qrDataURL.length);
+      console.log('QRService: Generated QR code successfully');
 
       return { qrDataURL, inviteCode };
     } catch (error) {
@@ -84,67 +69,23 @@ export class QRService {
     }
   }
 
-  private drawCornerPattern(ctx: CanvasRenderingContext2D, x: number, y: number): void {
-    // Draw QR corner pattern
-    ctx.fillRect(x, y, 40, 40);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(x + 5, y + 5, 30, 30);
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(x + 10, y + 10, 20, 20);
-  }
-
-  private drawDataPattern(ctx: CanvasRenderingContext2D, seed: string): void {
-    // Generate pseudo-random pattern based on invite code
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) {
-      hash = ((hash << 5) - hash + seed.charCodeAt(i)) & 0xffffffff;
-    }
-    
-    for (let x = 60; x < 190; x += 5) {
-      for (let y = 60; y < 190; y += 5) {
-        hash = ((hash * 1103515245) + 12345) & 0x7fffffff;
-        if (hash % 3 === 0) {
-          ctx.fillRect(x, y, 4, 4);
-        }
-      }
-    }
-  }
-
   async generateWebRTCServerOfferQR(offerData: any): Promise<string> {
     try {
       console.log('QRService: Generating WebRTC server QR for:', offerData);
       
-      // Generate QR code for WebRTC server offer
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = 256;
-      canvas.height = 256;
-      
-      if (ctx) {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, 256, 256);
-        ctx.fillStyle = '#000000';
-        
-        // Create WebRTC-specific pattern
-        this.drawCornerPattern(ctx, 10, 10);
-        this.drawCornerPattern(ctx, 200, 10);
-        this.drawCornerPattern(ctx, 10, 200);
-        
-        // WebRTC identifier pattern
-        ctx.fillRect(200, 200, 40, 40);
-        ctx.fillStyle = '#0066cc';
-        ctx.fillRect(205, 205, 30, 30);
-        
-        ctx.fillStyle = '#000000';
-        ctx.font = '10px Arial';
-        ctx.fillText('WebRTC', 90, 128);
-        if (offerData.organizationName) {
-          ctx.fillText(offerData.organizationName.substring(0, 12), 80, 140);
-        }
-      }
+      // Generate QR code for WebRTC server offer using qrcode library
+      const qrDataString = JSON.stringify(offerData);
+      const qrDataURL = await QRCode.toDataURL(qrDataString, {
+        width: 256,
+        margin: 2,
+        color: {
+          dark: '#0066cc',
+          light: '#FFFFFF'
+        },
+        errorCorrectionLevel: 'M'
+      });
 
-      const qrDataURL = canvas.toDataURL();
-      console.log('QRService: Generated WebRTC QR code data URL length:', qrDataURL.length);
+      console.log('QRService: Generated WebRTC QR code successfully');
       
       return qrDataURL;
     } catch (error) {
