@@ -12,8 +12,9 @@ const initializeBilling = async () => {
   }
   
   try {
-    // Use dynamic import with a more specific error handling
-    const billingModule = await import('@capacitor-community/billing').catch(() => null);
+    // Construct the import path dynamically to avoid Vite static analysis
+    const packageName = '@capacitor-community/billing';
+    const billingModule = await import(/* @vite-ignore */ packageName).catch(() => null);
     if (!billingModule) {
       console.warn('Billing plugin not available: module not found');
       return false;
