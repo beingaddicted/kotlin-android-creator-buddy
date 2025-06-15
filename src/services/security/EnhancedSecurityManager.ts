@@ -1,3 +1,4 @@
+
 import { SecurityManager } from './SecurityManager';
 import { CryptoUtils } from './CryptoUtils';
 import { configService } from './ConfigurationService';
@@ -15,7 +16,8 @@ export class EnhancedSecurityManager extends SecurityManager {
 
   // Enhanced QR code encryption with anti-replay protection
   async encryptQRData(qrData: any): Promise<string> {
-    if (!this.encryptionKey) {
+    const encryptionKey = this.getEncryptionKey();
+    if (!encryptionKey) {
       throw new Error('SecurityManager: Not initialized');
     }
 
@@ -25,16 +27,17 @@ export class EnhancedSecurityManager extends SecurityManager {
       const timestamp = Date.now();
       const expiresAt = timestamp + (5 * 60 * 1000); // 5 minutes expiry
 
+      const currentToken = this.getCurrentAccessToken();
       const secureQRData = {
         ...qrData,
         oneTimeToken,
         timestamp,
         expiresAt,
-        organizationId: this.currentAccessToken?.organizationId
+        organizationId: currentToken?.organizationId
       };
 
       const dataString = JSON.stringify(secureQRData);
-      const { encrypted, iv } = await CryptoUtils.encryptAES(dataString, this.encryptionKey);
+      const { encrypted, iv } = await CryptoUtils.encryptAES(dataString, encryptionKey);
       
       // Create digital signature
       const signature = await this.createDigitalSignature(dataString);
@@ -46,7 +49,7 @@ export class EnhancedSecurityManager extends SecurityManager {
         signature,
         timestamp,
         expiresAt,
-        organizationId: this.currentAccessToken?.organizationId
+        organizationId: currentToken?.organizationId
       };
 
       this.logSecurityEvent('qr_generated', { 
@@ -64,7 +67,8 @@ export class EnhancedSecurityManager extends SecurityManager {
 
   // Enhanced QR code decryption with replay attack prevention
   async decryptQRData(encryptedQRString: string): Promise<any> {
-    if (!this.encryptionKey) {
+    const encryptionKey = this.getEncryptionKey();
+    if (!encryptionKey) {
       throw new Error('SecurityManager: Not initialized');
     }
 
@@ -82,9 +86,10 @@ export class EnhancedSecurityManager extends SecurityManager {
       }
 
       // Verify organization match
-      if (encryptedQR.organizationId !== this.currentAccessToken?.organizationId) {
+      const currentToken = this.getCurrentAccessToken();
+      if (encryptedQR.organizationId !== currentToken?.organizationId) {
         this.logSecurityEvent('qr_org_mismatch', { 
-          expected: this.currentAccessToken?.organizationId,
+          expected: currentToken?.organizationId,
           received: encryptedQR.organizationId 
         }, 'high');
         throw new Error('QR code is for a different organization');
@@ -93,7 +98,7 @@ export class EnhancedSecurityManager extends SecurityManager {
       const encrypted = CryptoUtils.base64ToArrayBuffer(encryptedQR.data);
       const iv = new Uint8Array(CryptoUtils.base64ToArrayBuffer(encryptedQR.iv));
       
-      const decryptedString = await CryptoUtils.decryptAES(encrypted, this.encryptionKey, iv);
+      const decryptedString = await CryptoUtils.decryptAES(encrypted, encryptionKey, iv);
       const decryptedData = JSON.parse(decryptedString);
 
       // For v2 QR codes, check one-time token
@@ -276,6 +281,15 @@ export class EnhancedSecurityManager extends SecurityManager {
       console.error('Failed to verify digital signature:', error);
       return false;
     }
+  }
+
+  // Protected methods to access parent class properties
+  protected getEncryptionKey(): CryptoKey | null {
+    return (this as any).encryptionKey;
+  }
+
+  protected getCurrentAccessToken(): any {
+    return (this as any).currentAccessToken;
   }
 
   // Get security events for monitoring
