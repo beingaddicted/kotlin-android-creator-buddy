@@ -13,9 +13,10 @@ interface UserData {
 interface UseUserRegistrationProps {
   qrData: QRData;
   onJoinRequest: (registrationData: any, qrData: QRData) => void;
+  onCancel?: () => void;
 }
 
-export const useUserRegistration = ({ qrData, onJoinRequest }: UseUserRegistrationProps) => {
+export const useUserRegistration = ({ qrData, onJoinRequest, onCancel }: UseUserRegistrationProps) => {
   const [userData, setUserData] = useState<UserData>({
     name: '',
     age: '',
@@ -23,12 +24,60 @@ export const useUserRegistration = ({ qrData, onJoinRequest }: UseUserRegistrati
     email: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [requestSent, setRequestSent] = useState(false);
 
   const handleInputChange = (field: keyof UserData, value: string) => {
     setUserData(prev => ({
       ...prev,
       [field]: value
     }));
+  };
+
+  const handleCancel = () => {
+    if (requestSent) {
+      // Cancel the pending request
+      const cancelMessage = {
+        type: 'cancel_join_request',
+        data: {
+          userId: localStorage.getItem('userId'),
+          organizationId: qrData.organizationId,
+          adminId: qrData.adminId
+        },
+        timestamp: Date.now()
+      };
+
+      // Send cancel message via WebRTC
+      const connectedPeers = webRTCService.getConnectedPeers();
+      connectedPeers.forEach(peer => {
+        if (peer.id === qrData.adminId || peer.id.includes('admin')) {
+          webRTCService.sendToPeer(peer.id, cancelMessage);
+        }
+      });
+
+      // Dispatch event for admin to handle
+      const event = new CustomEvent('webrtc-cancel-join-request', {
+        detail: {
+          userId: localStorage.getItem('userId'),
+          organizationId: qrData.organizationId,
+          adminId: qrData.adminId
+        }
+      });
+      window.dispatchEvent(event);
+
+      // Clear local storage
+      localStorage.removeItem('userRegistration');
+      localStorage.removeItem('userId');
+
+      setRequestSent(false);
+      setIsSubmitting(false);
+      
+      console.log('Join request cancelled');
+    }
+
+    // Call the onCancel callback if provided
+    if (onCancel) {
+      onCancel();
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,21 +147,25 @@ export const useUserRegistration = ({ qrData, onJoinRequest }: UseUserRegistrati
       // Also call the original callback
       onJoinRequest(registrationData, qrData);
       
+      // Mark request as sent
+      setRequestSent(true);
+      
       // Show waiting message
-      alert('Join request sent! Please wait for admin approval.');
+      alert('Join request sent! Please wait for admin approval. You can cancel this request if needed.');
       
     } catch (error) {
       console.error('Registration failed:', error);
       alert('Registration failed. Please try again.');
       setIsSubmitting(false);
     }
-    // No longer setting isSubmitting to false here, as we wait for admin
   };
 
   return {
     userData,
     isSubmitting,
+    requestSent,
     handleInputChange,
     handleSubmit,
+    handleCancel,
   };
 };

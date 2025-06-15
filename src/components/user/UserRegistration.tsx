@@ -17,9 +17,15 @@ export const UserRegistration = ({ qrData, onJoinRequest, onBack }: UserRegistra
   const {
     userData,
     isSubmitting,
+    requestSent,
     handleInputChange,
     handleSubmit,
-  } = useUserRegistration({ qrData, onJoinRequest });
+    handleCancel,
+  } = useUserRegistration({ 
+    qrData, 
+    onJoinRequest,
+    onCancel: onBack 
+  });
 
   return (
     <div className="max-w-md mx-auto space-y-6">
@@ -44,7 +50,9 @@ export const UserRegistration = ({ qrData, onJoinRequest, onBack }: UserRegistra
             userData={userData}
             onInputChange={handleInputChange}
             onSubmit={handleSubmit}
+            onCancel={handleCancel}
             isSubmitting={isSubmitting}
+            requestSent={requestSent}
           />
         </CardContent>
       </Card>

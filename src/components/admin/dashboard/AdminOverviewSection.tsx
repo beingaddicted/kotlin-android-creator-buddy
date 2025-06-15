@@ -2,6 +2,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, Building2, MapPin, CreditCard } from "lucide-react";
 import { JoinRequests, JoinRequest } from "../JoinRequests";
+import { useEffect } from "react";
 
 interface Organization {
   id: string;
@@ -24,6 +25,29 @@ export const AdminOverviewSection = ({
   const totalMembers = organizations.reduce((sum, org) => sum + org.memberCount, 0);
   const totalActive = organizations.reduce((sum, org) => sum + org.active, 0);
   const monthlyCost = ((totalMembers * 10) / 100).toFixed(2);
+
+  useEffect(() => {
+    const handleCancelJoinRequest = (event: CustomEvent) => {
+      const { userId, organizationId } = event.detail;
+      
+      console.log('Admin received join request cancellation:', { userId, organizationId });
+      
+      // Find and remove the cancelled request from the join requests
+      // This would typically be handled by the parent component that manages joinRequests state
+      // For now, we'll just log it and dispatch an event for the parent to handle
+      const cancelEvent = new CustomEvent('admin-handle-cancel-request', {
+        detail: { userId, organizationId }
+      });
+      window.dispatchEvent(cancelEvent);
+    };
+
+    // Listen for join request cancellations
+    window.addEventListener('webrtc-cancel-join-request', handleCancelJoinRequest as EventListener);
+
+    return () => {
+      window.removeEventListener('webrtc-cancel-join-request', handleCancelJoinRequest as EventListener);
+    };
+  }, []);
 
   return (
     <div className="space-y-6">
