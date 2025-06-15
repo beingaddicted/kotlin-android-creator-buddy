@@ -2,55 +2,46 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useSupabaseAuth";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { NetworkStatus } from "@/components/NetworkStatus";
-import { HealthCheck } from "@/components/HealthCheck";
-import { PerformanceDashboard } from "@/components/PerformanceDashboard";
+import { ProductionWrapper } from "@/components/production/ProductionWrapper";
 import Index from "./pages/Index";
-import AuthPage from "./pages/Auth";
+import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      retry: (failureCount, error: any) => {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      retry: (failureCount, error) => {
         // Don't retry on auth errors
-        if (error?.status === 401 || error?.status === 403) {
-          return false;
-        }
+        if ((error as any)?.status === 401) return false;
         return failureCount < 3;
       },
     },
   },
 });
 
-function App() {
+const App = () => {
   return (
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <AuthProvider>
+          <ProductionWrapper>
+            <Toaster />
             <BrowserRouter>
-              <div className="min-h-screen bg-background font-sans antialiased">
-                <NetworkStatus />
-                <HealthCheck />
-                <Routes>
-                  <Route path="/" element={<Index />} />
-                  <Route path="/auth" element={<AuthPage />} />
-                  <Route path="/performance" element={<PerformanceDashboard />} />
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </div>
-              <Toaster />
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/auth" element={<Auth />} />
+                <Route path="/404" element={<NotFound />} />
+                <Route path="*" element={<Navigate to="/404" replace />} />
+              </Routes>
             </BrowserRouter>
-          </AuthProvider>
-        </TooltipProvider>
-      </QueryClientProvider>
-    </ErrorBoundary>
+          </ProductionWrapper>
+        </AuthProvider>
+      </TooltipProvider>
+    </QueryClientProvider>
   );
-}
+};
 
 export default App;
