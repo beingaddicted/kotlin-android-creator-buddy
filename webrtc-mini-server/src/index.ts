@@ -13,7 +13,7 @@ export interface MiniServerOptions {
 export class WebRTCMiniServer {
   private wsServer: WebSocketServer;
   private adminElection: AdminElection;
-  private isRunning = false;
+  private serverRunning = false;
 
   constructor(options: MiniServerOptions) {
     const port = options.port || 8080;
@@ -196,7 +196,7 @@ export class WebRTCMiniServer {
   }
 
   async start(): Promise<void> {
-    if (this.isRunning) return;
+    if (this.serverRunning) return;
 
     try {
       console.log('MiniServer: Starting WebRTC Mini Server');
@@ -204,7 +204,7 @@ export class WebRTCMiniServer {
       await this.wsServer.start();
       this.adminElection.start();
       
-      this.isRunning = true;
+      this.serverRunning = true;
       console.log('MiniServer: WebRTC Mini Server started successfully');
       
       // Emit started event
@@ -223,14 +223,14 @@ export class WebRTCMiniServer {
   }
 
   async stop(): Promise<void> {
-    if (!this.isRunning) return;
+    if (!this.serverRunning) return;
 
     console.log('MiniServer: Stopping WebRTC Mini Server');
     
     this.adminElection.stop();
     await this.wsServer.stop();
     
-    this.isRunning = false;
+    this.serverRunning = false;
     console.log('MiniServer: WebRTC Mini Server stopped');
     
     // Emit stopped event
@@ -241,7 +241,7 @@ export class WebRTCMiniServer {
   }
 
   isServerRunning(): boolean {
-    return this.isRunning && this.wsServer.isRunning();
+    return this.serverRunning && this.wsServer.isRunning();
   }
 
   getCurrentAdmin(): string | null {
@@ -259,7 +259,7 @@ export class WebRTCMiniServer {
   getServerStats(): any {
     const miniServer = this.wsServer.getMiniServer();
     return {
-      isRunning: this.isRunning,
+      isRunning: this.serverRunning,
       clientCount: miniServer.getClientCount(),
       currentAdmin: this.adminElection.getCurrentAdmin(),
       isAdmin: this.adminElection.isCurrentDeviceAdmin(),

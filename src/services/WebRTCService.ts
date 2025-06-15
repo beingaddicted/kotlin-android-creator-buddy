@@ -112,9 +112,9 @@ class WebRTCService {
     if (networkInfo.effectiveType === 'slow-2g' || networkInfo.effectiveType === '2g') {
       this.degradationManager.setDegradationLevel('minimal');
     } else if (networkInfo.effectiveType === '3g') {
-      this.degradationManager.setDegradationLevel('reduced');
+      this.degradationManager.setDegradationLevel('limited');
     } else {
-      this.degradationManager.setDegradationLevel('none');
+      this.degradationManager.setDegradationLevel('full');
     }
   }
 
@@ -539,7 +539,7 @@ class WebRTCService {
 
   getConnectionHealth() {
     const healthMonitor = this.core.webrtcConnection.getHealthMonitor();
-    return healthMonitor ? healthMonitor.getCurrentHealth() : null;
+    return healthMonitor ? healthMonitor.getLastHealth() : null;
   }
 
   getDegradationLevel() {
@@ -609,7 +609,7 @@ class WebRTCService {
       this.core.connectionManager.clearPeers();
       
       // Get stored connection data
-      const connections = this.persistentStorage.getAllConnections();
+      const connections = this.persistentStorage.getStoredConnections();
       
       if (connections.length > 0) {
         const lastConnection = connections[0]; // Get most recent
@@ -643,19 +643,18 @@ class WebRTCService {
 
   // Enhanced reconnection capabilities
   canAutoReconnect(): boolean {
-    const connections = this.persistentStorage.getAllConnections();
+    const connections = this.persistentStorage.getStoredConnections();
     return connections.length > 0;
   }
 
   getStoredClientCount(): number {
-    const connections = this.persistentStorage.getAllConnections();
+    const connections = this.persistentStorage.getStoredConnections();
     return connections.length;
   }
 }
 
 // Export types and main service
-export { WebRTCServerOffer, WebRTCMessage, PeerConnection };
-export type { DeviceInfo };
+export type { WebRTCServerOffer, WebRTCMessage, PeerConnection, DeviceInfo };
 
 const webRTCService = new WebRTCService();
 export { webRTCService };

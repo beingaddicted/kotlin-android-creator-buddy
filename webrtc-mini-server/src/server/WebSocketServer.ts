@@ -11,7 +11,7 @@ export interface WebSocketServerConfig {
 
 export class WebSocketServer extends BrowserEventEmitter {
   private miniServer: MiniServerCore;
-  private isRunning = false;
+  private serverRunning = false;
   private config: WebSocketServerConfig;
 
   constructor(config: WebSocketServerConfig) {
@@ -58,12 +58,12 @@ export class WebSocketServer extends BrowserEventEmitter {
   }
 
   async start(): Promise<void> {
-    if (this.isRunning) return;
+    if (this.serverRunning) return;
 
     try {
       console.log('WebSocketServer: Starting on port', this.config.port);
       this.miniServer.start();
-      this.isRunning = true;
+      this.serverRunning = true;
       console.log('WebSocketServer: Started successfully');
     } catch (error) {
       console.error('WebSocketServer: Failed to start:', error);
@@ -72,16 +72,16 @@ export class WebSocketServer extends BrowserEventEmitter {
   }
 
   async stop(): Promise<void> {
-    if (!this.isRunning) return;
+    if (!this.serverRunning) return;
 
     console.log('WebSocketServer: Stopping...');
     this.miniServer.stop();
-    this.isRunning = false;
+    this.serverRunning = false;
     console.log('WebSocketServer: Stopped');
   }
 
   isRunning(): boolean {
-    return this.isRunning && this.miniServer.isRunning();
+    return this.serverRunning && this.miniServer.isRunning();
   }
 
   getMiniServer(): MiniServerCore {

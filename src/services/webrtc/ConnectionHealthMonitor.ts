@@ -1,4 +1,3 @@
-
 export interface ConnectionHealth {
   status: 'excellent' | 'good' | 'poor' | 'critical';
   rtt: number;
@@ -23,6 +22,7 @@ export class ConnectionHealthMonitor {
   private previousStats: HealthMetrics | null = null;
   private healthCallbacks: ((health: ConnectionHealth) => void)[] = [];
   private isMonitoring = false;
+  private lastHealth: ConnectionHealth | null = null;
 
   setConnection(connection: RTCPeerConnection): void {
     this.connection = connection;
@@ -52,6 +52,14 @@ export class ConnectionHealthMonitor {
     this.healthCallbacks.push(callback);
   }
 
+  getCurrentHealth(): ConnectionHealth | null {
+    return this.lastHealth;
+  }
+
+  getLastHealth(): ConnectionHealth | null {
+    return this.lastHealth;
+  }
+
   private async checkConnectionHealth(): Promise<void> {
     if (!this.connection) return;
 
@@ -61,19 +69,22 @@ export class ConnectionHealthMonitor {
       
       if (currentMetrics) {
         const health = this.calculateHealth(currentMetrics);
+        this.lastHealth = health;
         this.notifyHealthCallbacks(health);
         this.previousStats = currentMetrics;
       }
     } catch (error) {
       console.error('Failed to check connection health:', error);
-      this.notifyHealthCallbacks({
-        status: 'critical',
+      const criticalHealth = {
+        status: 'critical' as const,
         rtt: 0,
         packetLoss: 100,
         bitrate: 0,
         jitter: 0,
         lastUpdated: Date.now()
-      });
+      };
+      this.lastHealth = criticalHealth;
+      this.notifyHealthCallbacks(criticalHealth);
     }
   }
 
@@ -153,5 +164,6 @@ export class ConnectionHealthMonitor {
     this.stopMonitoring();
     this.healthCallbacks = [];
     this.previousStats = null;
+    this.lastHealth = null;
   }
 }
