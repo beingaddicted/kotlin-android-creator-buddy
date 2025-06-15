@@ -1,15 +1,18 @@
 
 import { useEffect, useState } from 'react';
-import { SecurityManager } from '@/services/security/SecurityManager';
+import { EnhancedSecurityManager } from '@/services/security/EnhancedSecurityManager';
 import { DeviceIDManager } from '@/services/webrtc/DeviceIDManager';
+import { SessionTimeoutMonitor } from './SessionTimeoutMonitor';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Shield, ShieldCheck, ShieldX } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface SecurityInitializerProps {
   organizationId: string;
   role?: 'admin' | 'member';
   onSecurityReady?: () => void;
+  onSessionTimeout?: () => void;
   children: React.ReactNode;
 }
 
@@ -17,6 +20,7 @@ export const SecurityInitializer = ({
   organizationId, 
   role = 'member', 
   onSecurityReady,
+  onSessionTimeout,
   children 
 }: SecurityInitializerProps) => {
   const [securityStatus, setSecurityStatus] = useState<'initializing' | 'ready' | 'error'>('initializing');
@@ -37,8 +41,8 @@ export const SecurityInitializer = ({
         throw new Error('Device information not available');
       }
 
-      // Initialize security manager
-      const securityManager = new SecurityManager();
+      // Initialize enhanced security manager
+      const securityManager = new EnhancedSecurityManager();
       await securityManager.initialize(deviceInfo.deviceId, organizationId, role);
 
       // Make security manager globally available
@@ -47,12 +51,23 @@ export const SecurityInitializer = ({
       setSecurityStatus('ready');
       onSecurityReady?.();
       
-      console.log('SecurityInitializer: Security system initialized successfully');
+      console.log('SecurityInitializer: Enhanced security system initialized successfully');
+      toast.success('Secure connection established with enhanced protection');
     } catch (err) {
       console.error('SecurityInitializer: Failed to initialize security:', err);
       setError(err instanceof Error ? err.message : 'Failed to initialize security system');
       setSecurityStatus('error');
+      toast.error('Failed to establish secure connection');
     }
+  };
+
+  const handleSessionTimeout = () => {
+    toast.warning('Session expired for security reasons');
+    onSessionTimeout?.();
+  };
+
+  const handleExtendSession = () => {
+    toast.success('Session extended successfully');
   };
 
   if (securityStatus === 'initializing') {
@@ -61,8 +76,8 @@ export const SecurityInitializer = ({
         <div className="text-center space-y-4">
           <Shield className="w-12 h-12 text-blue-500 mx-auto animate-pulse" />
           <div>
-            <h3 className="text-lg font-semibold text-gray-900">Initializing Security</h3>
-            <p className="text-gray-600">Setting up encrypted communication...</p>
+            <h3 className="text-lg font-semibold text-gray-900">Initializing Enhanced Security</h3>
+            <p className="text-gray-600">Setting up encrypted communication with advanced protection...</p>
           </div>
           <LoadingSpinner size="sm" />
         </div>
@@ -92,9 +107,15 @@ export const SecurityInitializer = ({
       <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
         <div className="flex items-center text-green-800">
           <ShieldCheck className="w-4 h-4 mr-2" />
-          <span className="text-sm font-medium">Secure connection established</span>
+          <span className="text-sm font-medium">Enhanced secure connection established</span>
         </div>
       </div>
+      
+      <SessionTimeoutMonitor 
+        onSessionTimeout={handleSessionTimeout}
+        onExtendSession={handleExtendSession}
+      />
+      
       {children}
     </div>
   );

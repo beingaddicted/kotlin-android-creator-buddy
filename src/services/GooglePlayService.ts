@@ -1,6 +1,6 @@
-
 import { Capacitor } from '@capacitor/core';
 import { supabase } from '@/integrations/supabase/client';
+import { configService } from './security/ConfigurationService';
 
 let Billing: any = null;
 let Purchase: any = null;
@@ -160,7 +160,7 @@ export class GooglePlayService {
             body: {
                 purchaseToken,
                 productId,
-                packageName: 'app.lovable.bcd1eb8b14f5447a94a2bc357ec4de2b',
+                packageName: configService.getGooglePlayPackageName(),
             }
         });
 
