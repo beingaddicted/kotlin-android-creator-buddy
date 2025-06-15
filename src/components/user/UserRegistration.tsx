@@ -81,8 +81,8 @@ export const UserRegistration = ({ qrData, onJoinRequest, onBack }: UserRegistra
       
       // Try to find and send to admin peer
       connectedPeers.forEach(peer => {
-        if (peer.peerId === qrData.adminId || peer.peerId.includes('admin')) {
-          webRTCService.sendToPeer(peer.peerId, joinRequestMessage);
+        if (peer.id === qrData.adminId || peer.id.includes('admin')) {
+          webRTCService.sendToPeer(peer.id, joinRequestMessage);
           adminFound = true;
         }
       });
