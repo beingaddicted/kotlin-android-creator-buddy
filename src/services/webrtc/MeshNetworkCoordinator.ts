@@ -1,6 +1,7 @@
 
 import { DeviceIDManager, DeviceInfo } from './DeviceIDManager';
 import { WebRTCServerOffer } from './types';
+import { MiniServerBridge } from './MiniServerBridge';
 
 export interface MeshNetworkStatus {
   hasActiveAdmin: boolean;
@@ -16,6 +17,8 @@ export class MeshNetworkCoordinator {
   private onNetworkStatusChange?: (status: MeshNetworkStatus) => void;
   private onPromoteToServer?: () => Promise<WebRTCServerOffer>;
   private onDemoteFromServer?: () => void;
+  private miniServerBridge: MiniServerBridge;
+  private organizationId: string | null = null;
 
   constructor() {
     this.networkStatus = {
@@ -24,10 +27,21 @@ export class MeshNetworkCoordinator {
       connectedDevices: [],
       meshTopology: new Map()
     };
+    
+    this.miniServerBridge = new MiniServerBridge();
+    this.setupMiniServerCallbacks();
+  }
+
+  private setupMiniServerCallbacks(): void {
+    this.miniServerBridge.onServerOfferReady((offer) => {
+      // Broadcast the new mini server offer to all devices
+      this.broadcastTemporaryServerOffer(offer);
+    });
   }
 
   startCoordination(organizationId: string): void {
     console.log('MeshNetworkCoordinator: Starting coordination for org:', organizationId);
+    this.organizationId = organizationId;
     
     // Start monitoring admin presence
     this.startAdminHeartbeatMonitoring();
@@ -141,37 +155,36 @@ export class MeshNetworkCoordinator {
     // Don't become server if already one exists or if we're already admin
     return !this.networkStatus.temporaryServerId && 
            !this.networkStatus.hasActiveAdmin && 
-           !DeviceIDManager.isAdmin();
+           !DeviceIDManager.isAdmin() &&
+           !this.miniServerBridge.isServerRunning();
   }
 
   private async promoteToTemporaryServer(): Promise<void> {
     console.log('MeshNetworkCoordinator: Promoting to temporary server');
     
-    if (this.onPromoteToServer) {
-      try {
-        const serverOffer = await this.onPromoteToServer();
-        
-        DeviceIDManager.markAsTemporaryServer(true);
-        this.networkStatus.temporaryServerId = DeviceIDManager.getOrCreateDeviceId();
-        
-        // Broadcast new server offer to all connected devices
-        this.broadcastTemporaryServerOffer(serverOffer);
-        
-        this.notifyStatusChange();
-      } catch (error) {
-        console.error('MeshNetworkCoordinator: Failed to promote to temporary server:', error);
-      }
+    if (!this.organizationId) {
+      console.error('Cannot promote to temporary server: no organization ID');
+      return;
+    }
+    
+    try {
+      const serverOffer = await this.miniServerBridge.startMiniServer(this.organizationId);
+      
+      this.networkStatus.temporaryServerId = DeviceIDManager.getOrCreateDeviceId();
+      
+      // Broadcast new server offer to all connected devices
+      this.broadcastTemporaryServerOffer(serverOffer);
+      
+      this.notifyStatusChange();
+    } catch (error) {
+      console.error('MeshNetworkCoordinator: Failed to promote to temporary server:', error);
     }
   }
 
-  private demoteFromTemporaryServer(): void {
+  private async demoteFromTemporaryServer(): Promise<void> {
     console.log('MeshNetworkCoordinator: Demoting from temporary server');
     
-    if (this.onDemoteFromServer) {
-      this.onDemoteFromServer();
-    }
-    
-    DeviceIDManager.markAsTemporaryServer(false);
+    await this.miniServerBridge.stopMiniServer();
     this.networkStatus.temporaryServerId = null;
     
     this.notifyStatusChange();
@@ -222,6 +235,10 @@ export class MeshNetworkCoordinator {
     return { ...this.networkStatus };
   }
 
+  getMiniServerStats(): any {
+    return this.miniServerBridge.getServerStats();
+  }
+
   onNetworkStatusUpdate(callback: (status: MeshNetworkStatus) => void): void {
     this.onNetworkStatusChange = callback;
   }
@@ -246,6 +263,7 @@ export class MeshNetworkCoordinator {
       this.adminHeartbeatInterval = null;
     }
     
+    this.miniServerBridge.stopMiniServer();
     DeviceIDManager.markAsTemporaryServer(false);
   }
 }

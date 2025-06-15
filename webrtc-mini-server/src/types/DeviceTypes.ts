@@ -1,26 +1,26 @@
 
 export interface DeviceInfo {
   deviceId: string;
-  deviceType: 'admin' | 'client' | 'temporary-server';
   deviceName: string;
+  deviceType: 'admin' | 'client';
   organizationId: string;
+  capabilities: string[];
+  joinTime: number;
+  lastSeen: number;
+  priority: number;
   isTemporaryServer: boolean;
-  lastSeen: number;
-  capabilities: string[];
 }
 
-export interface MeshNode {
-  deviceId: string;
-  deviceName: string;
-  nodeType: 'admin' | 'client' | 'relay';
-  connections: string[];
-  lastSeen: number;
-  capabilities: string[];
+export interface DeviceCapabilities {
+  canManageAdmin: boolean;
+  canViewLocation: boolean;
+  canServeTemporary: boolean;
+  canBroadcast: boolean;
 }
 
-export interface NetworkTopology {
-  nodes: Map<string, MeshNode>;
-  activeAdmin: string | null;
-  temporaryServer: string | null;
-  organizationId: string;
-}
+export const DEFAULT_CAPABILITIES = {
+  ADMIN_MANAGE: 'admin.manage',
+  LOCATION_VIEW: 'location.view',
+  SERVER_TEMPORARY: 'server.temporary',
+  BROADCAST_MESSAGE: 'message.broadcast'
+};

@@ -7,6 +7,7 @@ import { WebRTCSignaling } from './WebRTCSignaling';
 import { WebRTCEventHandler } from './WebRTCEventHandler';
 import { WebRTCOfferManager } from './WebRTCOfferManager';
 import { AutoReconnectionManager } from './AutoReconnectionManager';
+import { MiniServerBridge } from './MiniServerBridge';
 
 export class WebRTCServiceCore {
   public webrtcConnection = new WebRTCConnection();
@@ -17,6 +18,7 @@ export class WebRTCServiceCore {
   public eventHandler = new WebRTCEventHandler();
   public offerManager = new WebRTCOfferManager();
   public autoReconnectionManager = new AutoReconnectionManager();
+  public miniServerBridge = new MiniServerBridge();
 
   public isAdmin = false;
   public userId: string | null = null;
@@ -37,11 +39,32 @@ export class WebRTCServiceCore {
     return 'disconnected';
   }
 
+  async startMiniServer(): Promise<any> {
+    if (!this.organizationId) {
+      throw new Error('Organization ID required to start mini server');
+    }
+    
+    return await this.miniServerBridge.startMiniServer(this.organizationId);
+  }
+
+  async stopMiniServer(): Promise<void> {
+    await this.miniServerBridge.stopMiniServer();
+  }
+
+  isMiniServerRunning(): boolean {
+    return this.miniServerBridge.isServerRunning();
+  }
+
+  getMiniServerStats(): any {
+    return this.miniServerBridge.getServerStats();
+  }
+
   cleanup(): void {
     this.ipChangeManager.stopMonitoring();
     this.reconnectionManager.clearAllReconnections();
     this.webrtcConnection.close();
     this.connectionManager.clearPeers();
     this.offerManager.clearLastServerOffer();
+    this.miniServerBridge.stopMiniServer();
   }
 }
