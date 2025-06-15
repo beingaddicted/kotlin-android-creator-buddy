@@ -95,39 +95,39 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
     // Heavily throttled WebRTC event listeners
-    const webrtcListeners = [
-      ['webrtc-connection-attempt', throttle((event: CustomEvent) => {
-        const { success, peerId, duration } = event.detail;
-        analytics.trackConnectionAttempt(peerId, success, duration);
-        healthMonitor.recordConnectionAttempt(success);
-      }, 5000)], // Increased from 2000 to 5000
-      
-      ['webrtc-signaling', throttle((event: CustomEvent) => {
-        const { type, peerId } = event.detail;
-        analytics.trackSignalingEvent(type, peerId);
-      }, 3000)], // Increased from 1000 to 3000
-      
-      ['webrtc-location-update', throttle(() => {
-        analytics.trackLocationShare(true);
-      }, 10000)], // Increased from 5000 to 10000
-      
-      ['webrtc-performance-warning', throttle((event: CustomEvent) => {
-        analytics.trackEvent('performance_warning', event.detail);
-      }, 30000)] // Increased from 10000 to 30000
-    ];
+    const webrtcConnectionHandler = throttle((event: CustomEvent) => {
+      const { success, peerId, duration } = event.detail;
+      analytics.trackConnectionAttempt(peerId, success, duration);
+      healthMonitor.recordConnectionAttempt(success);
+    }, 5000); // Increased from 2000 to 5000
+    
+    const webrtcSignalingHandler = throttle((event: CustomEvent) => {
+      const { type, peerId } = event.detail;
+      analytics.trackSignalingEvent(type, peerId);
+    }, 3000); // Increased from 1000 to 3000
+    
+    const webrtcLocationHandler = throttle(() => {
+      analytics.trackLocationShare(true);
+    }, 10000); // Increased from 5000 to 10000
+    
+    const webrtcPerformanceHandler = throttle((event: CustomEvent) => {
+      analytics.trackEvent('performance_warning', event.detail);
+    }, 30000); // Increased from 10000 to 30000
 
-    webrtcListeners.forEach(([event, handler]) => {
-      window.addEventListener(event as string, handler as EventListener);
-    });
+    window.addEventListener('webrtc-connection-attempt', webrtcConnectionHandler);
+    window.addEventListener('webrtc-signaling', webrtcSignalingHandler);
+    window.addEventListener('webrtc-location-update', webrtcLocationHandler);
+    window.addEventListener('webrtc-performance-warning', webrtcPerformanceHandler);
 
     return () => {
       healthMonitor.stopMonitoring();
       analytics.endSession();
       window.removeEventListener('error', handleError);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
-      webrtcListeners.forEach(([event, handler]) => {
-        window.removeEventListener(event as string, handler as EventListener);
-      });
+      window.removeEventListener('webrtc-connection-attempt', webrtcConnectionHandler);
+      window.removeEventListener('webrtc-signaling', webrtcSignalingHandler);
+      window.removeEventListener('webrtc-location-update', webrtcLocationHandler);
+      window.removeEventListener('webrtc-performance-warning', webrtcPerformanceHandler);
     };
   }, [user?.id, isOnline, isMonitoring, startMonitor, handleHealthChange]);
 
@@ -154,7 +154,7 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
         const buttonText = target.textContent || target.closest('button')?.textContent || 'unknown';
         handleUserAction('button_click', { buttonText });
       }
-    }, 2000), // Increased from 500 to 2000
+    }, 2000); // Increased from 500 to 2000
 
     document.addEventListener('click', handleClick);
     return () => document.removeEventListener('click', handleClick);
