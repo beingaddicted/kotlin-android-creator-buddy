@@ -26,6 +26,16 @@ interface UserSession {
   performanceMetrics: PerformanceMetric[];
 }
 
+// Type interfaces for Performance API entries
+interface PerformanceEventTiming extends PerformanceEntry {
+  processingStart: number;
+}
+
+interface LayoutShiftEntry extends PerformanceEntry {
+  value: number;
+  hadRecentInput: boolean;
+}
+
 export class AnalyticsService {
   private static instance: AnalyticsService;
   private sessionId: string;
@@ -159,29 +169,47 @@ export class AnalyticsService {
 
   trackCoreWebVitals() {
     // Track Largest Contentful Paint (LCP)
-    new PerformanceObserver((entryList) => {
-      const entries = entryList.getEntries();
-      const lastEntry = entries[entries.length - 1];
-      this.trackPerformance('lcp', lastEntry.startTime);
-    }).observe({ entryTypes: ['largest-contentful-paint'] });
-
-    // Track First Input Delay (FID)
-    new PerformanceObserver((entryList) => {
-      for (const entry of entryList.getEntries()) {
-        this.trackPerformance('fid', entry.processingStart - entry.startTime);
+    if ('PerformanceObserver' in window) {
+      try {
+        new PerformanceObserver((entryList) => {
+          const entries = entryList.getEntries();
+          const lastEntry = entries[entries.length - 1];
+          this.trackPerformance('lcp', lastEntry.startTime);
+        }).observe({ entryTypes: ['largest-contentful-paint'] });
+      } catch (e) {
+        console.warn('LCP monitoring not supported');
       }
-    }).observe({ entryTypes: ['first-input'] });
 
-    // Track Cumulative Layout Shift (CLS)
-    let clsValue = 0;
-    new PerformanceObserver((entryList) => {
-      for (const entry of entryList.getEntries()) {
-        if (!entry.hadRecentInput) {
-          clsValue += entry.value;
-        }
+      // Track First Input Delay (FID)
+      try {
+        new PerformanceObserver((entryList) => {
+          for (const entry of entryList.getEntries()) {
+            const eventTiming = entry as PerformanceEventTiming;
+            if (eventTiming.processingStart) {
+              this.trackPerformance('fid', eventTiming.processingStart - entry.startTime);
+            }
+          }
+        }).observe({ entryTypes: ['first-input'] });
+      } catch (e) {
+        console.warn('FID monitoring not supported');
       }
-      this.trackPerformance('cls', clsValue);
-    }).observe({ entryTypes: ['layout-shift'] });
+
+      // Track Cumulative Layout Shift (CLS)
+      try {
+        let clsValue = 0;
+        new PerformanceObserver((entryList) => {
+          for (const entry of entryList.getEntries()) {
+            const layoutShift = entry as LayoutShiftEntry;
+            if (layoutShift.hadRecentInput !== undefined && !layoutShift.hadRecentInput) {
+              clsValue += layoutShift.value || 0;
+            }
+          }
+          this.trackPerformance('cls', clsValue);
+        }).observe({ entryTypes: ['layout-shift'] });
+      } catch (e) {
+        console.warn('CLS monitoring not supported');
+      }
+    }
   }
 
   trackResourceTiming() {
