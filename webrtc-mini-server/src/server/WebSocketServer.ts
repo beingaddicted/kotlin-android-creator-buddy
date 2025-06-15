@@ -1,6 +1,5 @@
 
-import { WebSocketServer as WSServer, WebSocket } from 'ws';
-import { IncomingMessage } from 'http';
+import { BrowserEventEmitter } from '../utils/BrowserEventEmitter';
 import { MiniServerCore } from '../core/MiniServerCore';
 
 export interface WebSocketServerConfig {
@@ -10,111 +9,86 @@ export interface WebSocketServerConfig {
   deviceName: string;
 }
 
-export class WebSocketServer {
-  private wss: WSServer | null = null;
+export class WebSocketServer extends BrowserEventEmitter {
   private miniServer: MiniServerCore;
+  private isRunning = false;
   private config: WebSocketServerConfig;
 
   constructor(config: WebSocketServerConfig) {
+    super();
     this.config = config;
+    
+    // Use MiniServerCore for browser-compatible WebSocket management
     this.miniServer = new MiniServerCore({
-      ...config,
-      heartbeatInterval: 10000, // 10 seconds
-      clientTimeout: 30000 // 30 seconds
+      port: config.port,
+      organizationId: config.organizationId,
+      deviceId: config.deviceId,
+      deviceName: config.deviceName,
+      heartbeatInterval: 10000,
+      clientTimeout: 30000
+    });
+
+    this.setupMiniServerHandlers();
+  }
+
+  private setupMiniServerHandlers(): void {
+    this.miniServer.on('server-started', (event) => {
+      console.log('WebSocketServer: Mini server started for org:', event.organizationId);
+      this.emit('server-started', event);
+    });
+
+    this.miniServer.on('server-stopped', () => {
+      console.log('WebSocketServer: Mini server stopped');
+      this.emit('server-stopped');
+    });
+
+    this.miniServer.on('client-connected', (event) => {
+      console.log('WebSocketServer: Client connected:', event.clientId);
+      this.emit('client-connected', event);
+    });
+
+    this.miniServer.on('client-disconnected', (event) => {
+      console.log('WebSocketServer: Client disconnected:', event.clientId);
+      this.emit('client-disconnected', event);
+    });
+
+    this.miniServer.on('location-update', (event) => {
+      this.emit('location-update', event);
     });
   }
 
-  start(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        this.wss = new WSServer({ 
-          port: this.config.port,
-          verifyClient: (info) => this.verifyClient(info)
-        });
+  async start(): Promise<void> {
+    if (this.isRunning) return;
 
-        this.wss.on('connection', (ws, request) => {
-          this.handleConnection(ws, request);
-        });
-
-        this.wss.on('listening', () => {
-          console.log(`WebSocket server listening on port ${this.config.port}`);
-          this.miniServer.start();
-          resolve();
-        });
-
-        this.wss.on('error', (error) => {
-          console.error('WebSocket server error:', error);
-          reject(error);
-        });
-
-      } catch (error) {
-        reject(error);
-      }
-    });
-  }
-
-  stop(): Promise<void> {
-    return new Promise((resolve) => {
-      this.miniServer.stop();
-      
-      if (this.wss) {
-        this.wss.close(() => {
-          console.log('WebSocket server stopped');
-          resolve();
-        });
-      } else {
-        resolve();
-      }
-    });
-  }
-
-  private verifyClient(info: { origin: string; secure: boolean; req: IncomingMessage }): boolean {
-    // Basic verification - in production, you might want more sophisticated checks
-    const url = new URL(info.req.url || '', `http://${info.req.headers.host}`);
-    const organizationId = url.searchParams.get('organizationId');
-    
-    if (!organizationId || organizationId !== this.config.organizationId) {
-      console.log(`Rejected connection - invalid organization ID: ${organizationId}`);
-      return false;
+    try {
+      console.log('WebSocketServer: Starting on port', this.config.port);
+      this.miniServer.start();
+      this.isRunning = true;
+      console.log('WebSocketServer: Started successfully');
+    } catch (error) {
+      console.error('WebSocketServer: Failed to start:', error);
+      throw error;
     }
-    
-    return true;
   }
 
-  private handleConnection(ws: WebSocket, request: IncomingMessage): void {
-    console.log('New WebSocket connection');
-    
-    const url = new URL(request.url || '', `http://${request.headers.host}`);
-    const clientId = url.searchParams.get('clientId');
-    const clientName = url.searchParams.get('clientName') || 'Unknown Client';
-    const capabilities = url.searchParams.get('capabilities')?.split(',') || [];
-    
-    if (!clientId) {
-      console.log('Rejected connection - missing client ID');
-      ws.close(1008, 'Missing client ID');
-      return;
-    }
-    
-    // Send welcome message
-    ws.send(JSON.stringify({
-      type: 'welcome',
-      data: {
-        serverId: this.config.deviceId,
-        serverName: this.config.deviceName,
-        organizationId: this.config.organizationId,
-        timestamp: Date.now()
-      }
-    }));
-    
-    // Add client to mini server
-    this.miniServer.addClient(clientId, clientName, ws, capabilities);
+  async stop(): Promise<void> {
+    if (!this.isRunning) return;
+
+    console.log('WebSocketServer: Stopping...');
+    this.miniServer.stop();
+    this.isRunning = false;
+    console.log('WebSocketServer: Stopped');
+  }
+
+  isRunning(): boolean {
+    return this.isRunning && this.miniServer.isRunning();
   }
 
   getMiniServer(): MiniServerCore {
     return this.miniServer;
   }
 
-  isRunning(): boolean {
-    return this.wss !== null && this.miniServer.isRunning();
+  getConfig(): WebSocketServerConfig {
+    return { ...this.config };
   }
 }
