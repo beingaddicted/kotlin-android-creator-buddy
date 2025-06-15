@@ -1,4 +1,3 @@
-
 import { WebRTCServerOffer, WebRTCMessage, PeerConnection } from './webrtc/types';
 import { SignalingMessage } from './webrtc/SignalingService';
 import { WebRTCServiceCore } from './webrtc/WebRTCServiceCore';
@@ -37,8 +36,12 @@ class WebRTCService {
   private featureManager: WebRTCFeatureManager;
   private connectionManager: WebRTCConnectionManager;
   private currentDeviceId: string;
+  private initialized = false;
+  private cleanupTasks: (() => void)[] = [];
 
   constructor() {
+    if (this.initialized) return;
+    
     // Initialize device ID first
     this.currentDeviceId = DeviceIDManager.getOrCreateDeviceId();
     
@@ -84,10 +87,45 @@ class WebRTCService {
       this.multiAdminManager
     );
 
-    this.setupEnhancedMonitoring();
-    this.setupMeshNetworking();
-    this.setupAndroidOptimizations();
-    this.managers.setupEventManagerCallbacks(this.core);
+    // Lazy initialization of heavy components
+    this.setupLazyInitialization();
+    this.initialized = true;
+
+    // Clean expired connections on startup
+    this.persistentStorage.clearExpiredConnections();
+    
+    // Log browser compatibility once
+    const compatibility = this.compatibilityManager.getBrowserInfo();
+    if (compatibility.limitations.length > 0) {
+      console.warn('Browser limitations detected:', compatibility.limitations);
+    }
+  }
+
+  private setupLazyInitialization(): void {
+    // Setup enhanced monitoring only when needed
+    let monitoringInitialized = false;
+    const initializeMonitoring = () => {
+      if (monitoringInitialized) return;
+      this.setupEnhancedMonitoring();
+      this.setupMeshNetworking();
+      this.setupAndroidOptimizations();
+      this.managers.setupEventManagerCallbacks(this.core);
+      monitoringInitialized = true;
+    };
+
+    // Initialize monitoring on first real usage
+    const originalCreateServerOffer = this.createServerOffer.bind(this);
+    const originalConnectToServer = this.connectToServer.bind(this);
+
+    this.createServerOffer = async (...args) => {
+      initializeMonitoring();
+      return originalCreateServerOffer(...args);
+    };
+
+    this.connectToServer = async (...args) => {
+      initializeMonitoring();
+      return originalConnectToServer(...args);
+    };
 
     // Listen for admin online broadcasts (if not admin)
     this.broadcastManager.registerAdminOnlineListener(() => {
@@ -95,20 +133,11 @@ class WebRTCService {
       this.forceReconnect();
     });
 
-    // Add event listeners for robust client-side reconnection
+    // Add throttled event listeners for robust client-side reconnection
     this.eventListeners.setupEventListeners(
-      this.forceReconnect.bind(this),
-      this.handlePermanentConnectionLoss.bind(this)
+      this.throttle(this.forceReconnect.bind(this), 2000),
+      this.throttle(this.handlePermanentConnectionLoss.bind(this), 5000)
     );
-
-    // Clean expired connections on startup
-    this.persistentStorage.clearExpiredConnections();
-    
-    // Log browser compatibility
-    const compatibility = this.compatibilityManager.getBrowserInfo();
-    if (compatibility.limitations.length > 0) {
-      console.warn('Browser limitations detected:', compatibility.limitations);
-    }
   }
 
   private setupAndroidOptimizations(): void {
@@ -118,20 +147,31 @@ class WebRTCService {
       // Apply Android-specific optimizations
       this.androidOptimizer.handleAndroidNetworkChanges();
       
-      // Listen for Android-specific events
-      window.addEventListener('android-network-change', (event: CustomEvent) => {
+      // Throttled event listeners for Android-specific events
+      const handleNetworkChange = this.throttle((event: CustomEvent) => {
         console.log('WebRTCService: Android network change:', event.detail);
         this.handleNetworkChange(event.detail);
-      });
+      }, 3000);
 
-      window.addEventListener('android-app-backgrounded', () => {
+      const handleAppBackgrounded = this.throttle(() => {
         console.log('WebRTCService: App backgrounded, reducing activity');
         this.handleAppBackgrounded();
-      });
+      }, 1000);
 
-      window.addEventListener('android-app-foregrounded', () => {
+      const handleAppForegrounded = this.throttle(() => {
         console.log('WebRTCService: App foregrounded, resuming activity');
         this.handleAppForegrounded();
+      }, 1000);
+
+      window.addEventListener('android-network-change', handleNetworkChange);
+      window.addEventListener('android-app-backgrounded', handleAppBackgrounded);
+      window.addEventListener('android-app-foregrounded', handleAppForegrounded);
+
+      // Store cleanup tasks
+      this.cleanupTasks.push(() => {
+        window.removeEventListener('android-network-change', handleNetworkChange);
+        window.removeEventListener('android-app-backgrounded', handleAppBackgrounded);
+        window.removeEventListener('android-app-foregrounded', handleAppForegrounded);
       });
     }
   }
@@ -241,6 +281,17 @@ class WebRTCService {
       const { adminId, isOwnDevice } = event.detail;
       this.integration.handleAdminElectionResult(adminId, isOwnDevice);
     });
+  }
+
+  private throttle<T extends (...args: any[]) => any>(func: T, delay: number): T {
+    let inThrottle: boolean;
+    return ((...args: any[]) => {
+      if (!inThrottle) {
+        func.apply(this, args);
+        inThrottle = true;
+        setTimeout(() => inThrottle = false, delay);
+      }
+    }) as T;
   }
 
   async createServerOffer(organizationId: string, organizationName: string): Promise<WebRTCServerOffer> {
@@ -525,6 +576,17 @@ class WebRTCService {
 
   disconnect(): void {
     console.log('WebRTCService: Disconnecting...');
+    
+    // Run all cleanup tasks
+    this.cleanupTasks.forEach(cleanup => {
+      try {
+        cleanup();
+      } catch (error) {
+        console.warn('Cleanup task failed:', error);
+      }
+    });
+    this.cleanupTasks = [];
+
     this.core.cleanup();
     this.meshCoordinator.cleanup();
     this.multiAdminManager.cleanup();
