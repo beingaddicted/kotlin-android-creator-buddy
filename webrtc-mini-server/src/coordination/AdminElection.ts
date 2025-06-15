@@ -1,20 +1,15 @@
 
 import { EventEmitter } from 'events';
-
-export interface AdminCandidate {
-  deviceId: string;
-  deviceName: string;
-  capabilities: string[];
-  joinTime: number;
-  lastSeen: number;
-  priority: number;
-}
+import { CandidateManager } from './CandidateManager';
+import { ElectionLogic } from './ElectionLogic';
+import { HeartbeatManager } from './HeartbeatManager';
+import { AdminCandidate, AdminElectionEvent } from './types';
 
 export class AdminElection extends EventEmitter {
-  private candidates = new Map<string, AdminCandidate>();
+  private candidateManager: CandidateManager;
+  private heartbeatManager: HeartbeatManager;
   private currentAdmin: string | null = null;
   private electionTimeout: NodeJS.Timeout | null = null;
-  private heartbeatInterval: NodeJS.Timeout | null = null;
   private isElectionInProgress = false;
   private isStarted = false;
 
@@ -30,6 +25,24 @@ export class AdminElection extends EventEmitter {
     if (!organizationId || !ownDeviceId) {
       throw new Error('Organization ID and device ID are required');
     }
+
+    this.candidateManager = new CandidateManager();
+    this.heartbeatManager = new HeartbeatManager(
+      this.ownDeviceId,
+      () => this.handleStaleCheck()
+    );
+
+    this.setupHeartbeatHandlers();
+  }
+
+  private setupHeartbeatHandlers(): void {
+    this.heartbeatManager.on('heartbeat-broadcast', (event) => {
+      // Update our own heartbeat
+      this.candidateManager.updateCandidateHeartbeat(this.ownDeviceId);
+      
+      // Forward the event
+      this.emit('heartbeat-broadcast', event);
+    });
   }
 
   start(): void {
@@ -43,16 +56,16 @@ export class AdminElection extends EventEmitter {
     
     try {
       // Register ourselves as a candidate
-      this.registerCandidate({
+      this.candidateManager.registerCandidate({
         deviceId: this.ownDeviceId,
         deviceName: this.ownDeviceName,
         capabilities: this.ownCapabilities,
         joinTime: Date.now(),
         lastSeen: Date.now(),
-        priority: this.calculatePriority(this.ownCapabilities)
+        priority: ElectionLogic.calculatePriority(this.ownCapabilities)
       });
 
-      this.startHeartbeat();
+      this.heartbeatManager.start();
       this.scheduleElection();
     } catch (error) {
       console.error('AdminElection: Failed to start:', error);
@@ -72,25 +85,14 @@ export class AdminElection extends EventEmitter {
       this.electionTimeout = null;
     }
     
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-    
-    this.candidates.clear();
+    this.heartbeatManager.stop();
+    this.candidateManager.clear();
     this.currentAdmin = null;
     this.isElectionInProgress = false;
   }
 
   registerCandidate(candidate: AdminCandidate): void {
-    // Validate candidate
-    if (!candidate.deviceId || !candidate.deviceName) {
-      console.error('AdminElection: Invalid candidate data');
-      return;
-    }
-    
-    console.log(`AdminElection: Registering candidate ${candidate.deviceId}`);
-    this.candidates.set(candidate.deviceId, candidate);
+    this.candidateManager.registerCandidate(candidate);
     
     // If we don't have an admin yet, schedule an election
     if (!this.currentAdmin && !this.isElectionInProgress && this.isStarted) {
@@ -99,20 +101,26 @@ export class AdminElection extends EventEmitter {
   }
 
   updateCandidateHeartbeat(deviceId: string): void {
-    const candidate = this.candidates.get(deviceId);
-    if (candidate) {
-      candidate.lastSeen = Date.now();
-    }
+    this.candidateManager.updateCandidateHeartbeat(deviceId);
   }
 
   removeCandidateFromElection(deviceId: string): void {
-    if (!deviceId) return;
-    
-    console.log(`AdminElection: Removing candidate ${deviceId}`);
-    this.candidates.delete(deviceId);
+    this.candidateManager.removeCandidate(deviceId);
     
     // If the current admin was removed, trigger new election
     if (this.currentAdmin === deviceId) {
+      this.currentAdmin = null;
+      if (this.isStarted) {
+        this.scheduleElection();
+      }
+    }
+  }
+
+  private handleStaleCheck(): void {
+    const removedCandidates = this.candidateManager.removeStaleCandidate();
+    
+    // If current admin was removed due to staleness, trigger election
+    if (removedCandidates.includes(this.currentAdmin || '')) {
       this.currentAdmin = null;
       if (this.isStarted) {
         this.scheduleElection();
@@ -147,17 +155,16 @@ export class AdminElection extends EventEmitter {
     console.log('AdminElection: Conducting election');
     
     try {
-      // Remove stale candidates
-      this.removeStaleCandidate();
+      const activeCandidates = this.candidateManager.getActiveCandidates();
       
-      if (this.candidates.size === 0) {
+      if (activeCandidates.length === 0) {
         console.log('AdminElection: No candidates available');
         this.isElectionInProgress = false;
         return;
       }
       
       // Find the best candidate
-      const winner = this.selectWinner();
+      const winner = ElectionLogic.selectWinner(activeCandidates);
       
       if (winner) {
         const previousAdmin = this.currentAdmin;
@@ -165,98 +172,20 @@ export class AdminElection extends EventEmitter {
         
         console.log(`AdminElection: Elected ${winner.deviceId} as admin`);
         
-        this.emit('admin-elected', {
+        const electionEvent: AdminElectionEvent = {
           adminId: winner.deviceId,
           adminName: winner.deviceName,
           previousAdmin,
           isOwnDevice: winner.deviceId === this.ownDeviceId
-        });
+        };
+        
+        this.emit('admin-elected', electionEvent);
       }
     } catch (error) {
       console.error('AdminElection: Error during election:', error);
     } finally {
       this.isElectionInProgress = false;
     }
-  }
-
-  private selectWinner(): AdminCandidate | null {
-    const activeCandidates = Array.from(this.candidates.values())
-      .filter(c => this.isCandidateActive(c));
-    
-    if (activeCandidates.length === 0) return null;
-    
-    // Sort by priority (highest first), then by join time (earliest first)
-    activeCandidates.sort((a, b) => {
-      if (a.priority !== b.priority) {
-        return b.priority - a.priority; // Higher priority first
-      }
-      return a.joinTime - b.joinTime; // Earlier join time first
-    });
-    
-    return activeCandidates[0];
-  }
-
-  private calculatePriority(capabilities: string[]): number {
-    if (!Array.isArray(capabilities)) return 0;
-    
-    let priority = 0;
-    
-    // Higher priority for devices with more capabilities
-    priority += capabilities.length;
-    
-    // Bonus for specific capabilities
-    if (capabilities.includes('location.view')) priority += 5;
-    if (capabilities.includes('admin.manage')) priority += 10;
-    if (capabilities.includes('server.temporary')) priority += 3;
-    
-    return priority;
-  }
-
-  private isCandidateActive(candidate: AdminCandidate): boolean {
-    const now = Date.now();
-    const timeout = 30000; // 30 seconds
-    return (now - candidate.lastSeen) < timeout;
-  }
-
-  private removeStaleCandidate(): void {
-    const now = Date.now();
-    const timeout = 30000; // 30 seconds
-    
-    const staleCandidates: string[] = [];
-    
-    this.candidates.forEach((candidate, deviceId) => {
-      if ((now - candidate.lastSeen) > timeout) {
-        staleCandidates.push(deviceId);
-      }
-    });
-    
-    staleCandidates.forEach(deviceId => {
-      this.removeCandidateFromElection(deviceId);
-    });
-  }
-
-  private startHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-    }
-    
-    this.heartbeatInterval = setInterval(() => {
-      try {
-        // Update our own heartbeat
-        this.updateCandidateHeartbeat(this.ownDeviceId);
-        
-        // Broadcast heartbeat to other candidates
-        this.emit('heartbeat-broadcast', {
-          deviceId: this.ownDeviceId,
-          timestamp: Date.now()
-        });
-        
-        // Check for stale candidates
-        this.removeStaleCandidate();
-      } catch (error) {
-        console.error('AdminElection: Heartbeat error:', error);
-      }
-    }, 10000); // Every 10 seconds
   }
 
   getCurrentAdmin(): string | null {
@@ -268,7 +197,7 @@ export class AdminElection extends EventEmitter {
   }
 
   getCandidates(): AdminCandidate[] {
-    return Array.from(this.candidates.values());
+    return this.candidateManager.getAllCandidates();
   }
 
   isElectionActive(): boolean {
@@ -279,3 +208,6 @@ export class AdminElection extends EventEmitter {
     return this.isStarted;
   }
 }
+
+// Re-export types for backward compatibility
+export type { AdminCandidate, AdminElectionEvent, HeartbeatEvent } from './types';

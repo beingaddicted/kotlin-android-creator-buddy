@@ -1,4 +1,3 @@
-
 import { EventEmitter } from 'events';
 import { WebSocket } from 'ws';
 
@@ -78,7 +77,7 @@ export class MiniServerCore extends EventEmitter {
     
     // Set up WebSocket handlers
     ws.on('message', (data) => {
-      this.handleClientMessage(clientId, data);
+      this.handleClientMessage(clientId, Buffer.from(data as ArrayBuffer));
     });
     
     ws.on('close', () => {

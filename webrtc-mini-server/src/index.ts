@@ -1,7 +1,6 @@
-
 import { WebSocketServer } from './server/WebSocketServer';
 import { AdminElection } from './coordination/AdminElection';
-import { DeviceInfo } from './types/DeviceTypes';
+import type { DeviceInfo } from './types/DeviceTypes';
 
 export interface MiniServerOptions {
   port?: number;
@@ -168,5 +167,5 @@ export class WebRTCMiniServer {
 }
 
 // Export for easy instantiation
-export { DeviceInfo } from './types/DeviceTypes';
+export type { DeviceInfo } from './types/DeviceTypes';
 export default WebRTCMiniServer;
