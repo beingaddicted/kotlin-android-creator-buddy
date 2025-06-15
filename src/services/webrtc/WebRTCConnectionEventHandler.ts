@@ -1,3 +1,4 @@
+
 import { WebRTCConnection } from './WebRTCConnection';
 import { ConnectionManager } from './ConnectionManager';
 import { ReconnectionManager } from './ReconnectionManager';
@@ -19,7 +20,7 @@ export class WebRTCConnectionEventHandler {
   onSendUpdatedOfferToClient?: (clientId: string) => Promise<void>;
   onAttemptReconnection?: (peerId: string) => Promise<void>;
   getLastServerOffer?: () => any;
-  organizationId?: string;
+  organizationId?: string | null;
 
   constructor(
     webrtcConnection: WebRTCConnection,
@@ -43,81 +44,121 @@ export class WebRTCConnectionEventHandler {
     const connection = this.webrtcConnection.getConnection();
     if (!connection) return;
 
-    this.eventHandler.setupConnectionEvents(connection, {
-      onIceCandidate: (candidate) => {
-        this.webrtcConnection.addPendingIceCandidate(candidate);
-        console.log('ICE candidate generated');
-        
-        const peers = this.connectionManager.getConnectedPeers();
-        peers.forEach(peer => {
-          this.connectionManager.sendIceCandidate(peer.id, candidate);
-        });
-      },
-      
-      onConnectionStateChange: (state) => {
-        if (state === 'connected') {
-          const peers = this.connectionManager.getConnectedPeers();
-          peers.forEach(peer => {
-            this.reconnectionManager.markReconnectionSuccess(peer.id);
-            
-            if (this.isAdmin) {
-              this.autoReconnectionManager.saveClientConnection(
-                peer.id,
-                peer.name,
-                peer.organizationId
-              );
-            }
-          });
-          
-          this.ipChangeManager.setConnectionInstability(false);
-          console.log('Successfully connected to peer');
-        } else if (state === 'disconnected' || state === 'failed') {
-          this.handleConnectionLoss();
-        }
-      },
-      
-      onDataChannel: (channel) => {
-        const lastOffer = this.getLastServerOffer?.();
-        if (lastOffer) {
-          this.connectionManager.setupDataChannel(channel, lastOffer.adminId);
-        }
-      }
+    connection.onconnectionstatechange = () => {
+      this.handleConnectionStateChange(connection.connectionState);
+    };
+
+    connection.oniceconnectionstatechange = () => {
+      this.handleIceConnectionStateChange(connection.iceConnectionState);
+    };
+
+    connection.onicecandidateerror = (event) => {
+      this.handleIceCandidateError(event);
+    };
+  }
+
+  private handleConnectionStateChange(state: RTCPeerConnectionState): void {
+    console.log('Connection state changed:', state);
+    
+    switch (state) {
+      case 'connected':
+        this.handleConnectionEstablished();
+        break;
+      case 'disconnected':
+        this.handleConnectionLost();
+        break;
+      case 'failed':
+        this.handleConnectionFailed();
+        break;
+      case 'closed':
+        this.handleConnectionClosed();
+        break;
+    }
+  }
+
+  private handleIceConnectionStateChange(state: RTCIceConnectionState): void {
+    console.log('ICE connection state changed:', state);
+    
+    if (state === 'failed' || state === 'disconnected') {
+      this.handleIceConnectionIssue(state);
+    }
+  }
+
+  private handleIceCandidateError(event: RTCPeerConnectionIceErrorEvent): void {
+    console.error('ICE candidate error:', event);
+    this.ipChangeManager.setConnectionInstability(true);
+  }
+
+  private handleConnectionEstablished(): void {
+    console.log('WebRTC connection established successfully');
+    this.ipChangeManager.setConnectionInstability(false);
+    this.reconnectionManager.clearAllReconnections();
+    
+    this.eventHandler.dispatchEvent('webrtc-connection-established', {
+      timestamp: Date.now()
     });
   }
 
-  private handleConnectionLoss(): void {
-    // Use getAllPeers to ensure we try to reconnect even if status is already 'disconnected'
+  private handleConnectionLost(): void {
+    console.log('WebRTC connection lost');
+    this.ipChangeManager.setConnectionInstability(true);
+    
+    if (this.isAdmin) {
+      this.startAdminReconnectionProcess();
+    } else {
+      this.startClientReconnectionProcess();
+    }
+    
+    this.eventHandler.dispatchEvent('webrtc-connection-lost', {
+      timestamp: Date.now()
+    });
+  }
+
+  private handleConnectionFailed(): void {
+    console.log('WebRTC connection failed');
+    this.handleConnectionLost();
+  }
+
+  private handleConnectionClosed(): void {
+    console.log('WebRTC connection closed');
+    this.ipChangeManager.setConnectionInstability(false);
+  }
+
+  private handleIceConnectionIssue(state: RTCIceConnectionState): void {
+    console.log('ICE connection issue:', state);
+    
+    if (this.isAdmin && state === 'failed') {
+      this.handleAdminIceFailure();
+    }
+  }
+
+  private startAdminReconnectionProcess(): void {
     const peers = this.connectionManager.getAllPeers();
     
-    if (peers.length === 0) {
-      console.log('Connection lost, but no known peers to reconnect to. Notifying system.');
-      this.notifyConnectionLost();
-      return;
-    }
-
     peers.forEach(peer => {
       if (this.reconnectionManager.shouldInitiateReconnection(peer.id, 'connection-lost')) {
         const attemptNumber = this.reconnectionManager.startReconnectionAttempt(peer.id, 'connection-lost');
         const delay = this.reconnectionManager.getDelayForAttempt(attemptNumber);
         
-        setTimeout(async () => {
-          this.onAttemptReconnection?.(peer.id);
+        setTimeout(() => {
+          this.onSendUpdatedOfferToClient?.(peer.id);
         }, delay);
       }
     });
   }
 
-  notifyConnectionLost(peerId?: string): void {
-    console.log('Connection permanently lost for peer:', peerId);
-    
-    const event = new CustomEvent('webrtc-connection-lost', {
-      detail: {
-        isAdmin: this.isAdmin,
-        organizationId: this.organizationId,
-        peerId: peerId,
-        reconnectionState: peerId ? this.reconnectionManager.getReconnectionState(peerId) : null
-      }
-    });
-    window.dispatchEvent(event);
+  private startClientReconnectionProcess(): void {
+    const lastOffer = this.getLastServerOffer?.();
+    if (lastOffer) {
+      setTimeout(() => {
+        this.onAttemptReconnection?.(lastOffer.adminId);
+      }, 5000);
+    }
+  }
+
+  private handleAdminIceFailure(): void {
+    if (this.organizationId) {
+      this.autoReconnectionManager.startAutoReconnection(this.organizationId);
+    }
   }
 }

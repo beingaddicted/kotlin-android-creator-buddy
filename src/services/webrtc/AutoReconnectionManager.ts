@@ -1,191 +1,37 @@
 
-import { PersistentStorage, StoredClientInfo, StoredServerState } from './PersistentStorage';
-import { WebRTCConnection } from './WebRTCConnection';
-import { WebRTCOfferManager } from './WebRTCOfferManager';
-import { ConnectionManager } from './ConnectionManager';
-
 export class AutoReconnectionManager {
-  private persistentStorage = new PersistentStorage();
   private isAutoReconnecting = false;
-  private reconnectionTimeout: NodeJS.Timeout | null = null;
+  private reconnectionInterval: NodeJS.Timeout | null = null;
 
-  async attemptAutoReconnection(
-    webrtcConnection: WebRTCConnection,
-    offerManager: WebRTCOfferManager,
-    connectionManager: ConnectionManager
-  ): Promise<boolean> {
-    const storedState = this.persistentStorage.loadServerState();
+  startAutoReconnection(organizationId: string): void {
+    if (this.isAutoReconnecting) return;
     
-    if (!storedState || !storedState.isActive || storedState.clients.length === 0) {
-      console.log('No stored server state or clients found for auto-reconnection');
-      return false;
-    }
-
-    console.log(`AutoReconnection: Found ${storedState.clients.length} stored clients to reconnect`);
     this.isAutoReconnecting = true;
-
-    try {
-      // Restore the last server offer if available
-      if (storedState.lastServerOffer) {
-        offerManager.setLastServerOffer(storedState.lastServerOffer);
-      }
-
-      // Create new server offer for reconnection
-      const newServerOffer = await offerManager.createUpdatedOffer(
-        webrtcConnection,
-        'auto-reconnect-ip',
-        { iceRestart: true }
-      );
-
-      if (!newServerOffer) {
-        console.error('Failed to create updated offer for auto-reconnection');
-        return false;
-      }
-
-      // Update persistent storage with new offer
-      this.persistentStorage.updateLastServerOffer(newServerOffer);
-
-      // Attempt to reconnect to each stored client
-      let reconnectedCount = 0;
-      for (const client of storedState.clients) {
-        try {
-          await this.reconnectToClient(client, newServerOffer, connectionManager);
-          reconnectedCount++;
-        } catch (error) {
-          console.error(`Failed to reconnect to client ${client.id}:`, error);
-          this.incrementClientConnectionAttempts(client.id);
-        }
-      }
-
-      console.log(`AutoReconnection: Successfully initiated reconnection to ${reconnectedCount}/${storedState.clients.length} clients`);
-      
-      // Schedule cleanup of failed clients
-      this.scheduleFailedClientCleanup();
-      
-      return reconnectedCount > 0;
-
-    } catch (error) {
-      console.error('Auto-reconnection failed:', error);
-      return false;
-    } finally {
-      this.isAutoReconnecting = false;
-    }
-  }
-
-  private async reconnectToClient(
-    client: StoredClientInfo,
-    serverOffer: any,
-    connectionManager: ConnectionManager
-  ): Promise<void> {
-    console.log(`Attempting to reconnect to client: ${client.name} (${client.id})`);
-
-    // Add client back to connection manager
-    connectionManager.addPeer({
-      id: client.id,
-      name: client.name,
-      organizationId: client.organizationId,
-      connection: connectionManager.getPeer(client.id)?.connection || new RTCPeerConnection(),
-      status: 'connecting',
-      lastSeen: client.lastConnected
-    });
-
-    // Send new offer through signaling
-    connectionManager.sendNewOffer(client.id, serverOffer);
-
-    // Update client's last connection attempt
-    this.persistentStorage.addOrUpdateClient({
-      ...client,
-      lastConnected: Date.now(),
-      connectionAttempts: client.connectionAttempts + 1
-    });
-  }
-
-  private incrementClientConnectionAttempts(clientId: string): void {
-    const storedClients = this.persistentStorage.getStoredClients();
-    const client = storedClients.find(c => c.id === clientId);
+    console.log('Starting auto-reconnection for organization:', organizationId);
     
-    if (client) {
-      client.connectionAttempts += 1;
-      
-      // Remove clients that have failed too many times
-      if (client.connectionAttempts > 5) {
-        console.log(`Removing client ${clientId} after ${client.connectionAttempts} failed attempts`);
-        this.persistentStorage.removeClient(clientId);
-      } else {
-        this.persistentStorage.addOrUpdateClient(client);
-      }
-    }
-  }
-
-  private scheduleFailedClientCleanup(): void {
-    if (this.reconnectionTimeout) {
-      clearTimeout(this.reconnectionTimeout);
-    }
-
-    // Clean up clients that haven't connected after 30 seconds
-    this.reconnectionTimeout = setTimeout(() => {
-      const storedClients = this.persistentStorage.getStoredClients();
-      const failedClients = storedClients.filter(client => 
-        Date.now() - client.lastConnected > 30000 && client.connectionAttempts > 3
-      );
-
-      failedClients.forEach(client => {
-        console.log(`Cleaning up failed client: ${client.name} (${client.id})`);
-        this.persistentStorage.removeClient(client.id);
-      });
-    }, 30000);
-  }
-
-  saveClientConnection(clientId: string, clientName: string, organizationId: string): void {
-    const clientInfo: StoredClientInfo = {
-      id: clientId,
-      name: clientName,
-      organizationId,
-      lastConnected: Date.now(),
-      connectionAttempts: 0
-    };
-
-    this.persistentStorage.addOrUpdateClient(clientInfo);
-    console.log(`Saved client connection: ${clientName} (${clientId})`);
-  }
-
-  initializeServerState(organizationId: string, organizationName: string, adminId: string): void {
-    const serverState: StoredServerState = {
-      organizationId,
-      organizationName,
-      adminId,
-      lastServerOffer: null,
-      clients: [],
-      isActive: true
-    };
-
-    this.persistentStorage.saveServerState(serverState);
-    console.log('Initialized server state for auto-reconnection');
-  }
-
-  deactivateServer(): void {
-    this.persistentStorage.setServerActive(false);
+    // Dispatch event to notify UI
+    window.dispatchEvent(new CustomEvent('webrtc-auto-reconnection-started', {
+      detail: { organizationId, reconnectedClients: 0 }
+    }));
     
-    if (this.reconnectionTimeout) {
-      clearTimeout(this.reconnectionTimeout);
-      this.reconnectionTimeout = null;
-    }
+    // Set a timeout to stop auto-reconnection after some time
+    setTimeout(() => {
+      this.stopAutoReconnection();
+    }, 120000); // 2 minutes
   }
 
-  clearServerState(): void {
-    this.persistentStorage.clearServerState();
+  stopAutoReconnection(): void {
+    this.isAutoReconnecting = false;
     
-    if (this.reconnectionTimeout) {
-      clearTimeout(this.reconnectionTimeout);
-      this.reconnectionTimeout = null;
+    if (this.reconnectionInterval) {
+      clearInterval(this.reconnectionInterval);
+      this.reconnectionInterval = null;
     }
+    
+    console.log('Auto-reconnection stopped');
   }
 
-  isReconnecting(): boolean {
+  isCurrentlyAutoReconnecting(): boolean {
     return this.isAutoReconnecting;
-  }
-
-  getStoredState(): StoredServerState | null {
-    return this.persistentStorage.loadServerState();
   }
 }

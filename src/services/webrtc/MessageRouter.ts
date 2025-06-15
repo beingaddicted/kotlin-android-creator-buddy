@@ -19,86 +19,106 @@ export class MessageRouter {
   }
 
   async routeMessage(event: MessageEvent, peerId: string): Promise<void> {
-    const message = JSON.parse(event.data);
-    
-    // Handle security messages first
-    if (SecurityMessageHandler.isSecurityMessage(message)) {
-      await SecurityMessageHandler.handleSecurityMessage(message, peerId);
-      return;
-    }
-    
-    // Check if it's a signaling message
-    if (this.isSignalingMessage(message)) {
-      // Let SignalingService handle it - don't process here
-      return;
-    }
-    
-    // Handle as regular WebRTC message
-    await this.handleWebRTCMessage(message as WebRTCMessage, peerId);
-  }
-
-  private async handleWebRTCMessage(message: WebRTCMessage, peerId: string): Promise<void> {
-    console.log('MessageRouter: Received message:', message.type, 'from:', peerId);
-
-    // Check permissions for sensitive operations
-    if (window.securityManager && SecurityMessageHandler.requiresPermission(message.type)) {
-      if (!SecurityMessageHandler.checkMessagePermissions(message, peerId)) {
-        console.warn('MessageRouter: Insufficient permissions for message type:', message.type);
+    try {
+      const message = JSON.parse(event.data);
+      
+      // Handle security messages first
+      if (SecurityMessageHandler.isSecurityMessage(message)) {
+        await SecurityMessageHandler.handleSecurityMessage(message, peerId);
         return;
       }
-    }
 
-    switch (message.type) {
-      case 'location':
-        if (this.onLocationReceived) {
-          this.peerManager.updatePeerLastSeen(peerId);
-          this.onLocationReceived(peerId, message.data);
-        }
-        break;
-        
-      case 'location-request':
-        if (window.securityManager && !window.securityManager.canAccessLocation(peerId)) {
-          console.warn('MessageRouter: Unauthorized location request from', peerId);
-          return;
-        }
-        
-        if (!this.isServer) {
-          this.sendLocationRequestedEvent();
-        }
-        break;
-        
-      case 'mesh-data':
-        this.handleMeshData(message.data, peerId);
-        break;
-        
-      default:
-        if (this.onMessageReceived) {
-          this.onMessageReceived(message, peerId);
-        }
-        break;
+      // Update peer last seen
+      this.peerManager.updatePeerLastSeen(peerId);
+
+      // Route based on message type
+      switch (message.type) {
+        case 'location_update':
+          this.handleLocationUpdate(message, peerId);
+          break;
+        case 'location_request':
+          this.handleLocationRequest(peerId);
+          break;
+        case 'signaling':
+          this.handleSignalingMessage(message, peerId);
+          break;
+        case 'mesh_data':
+          this.handleMeshData(message, peerId);
+          break;
+        default:
+          this.handleGenericMessage(message, peerId);
+      }
+    } catch (error) {
+      console.error('Failed to route message:', error);
     }
   }
 
-  private isSignalingMessage(data: any): boolean {
-    return data && 
-           typeof data === 'object' &&
-           ['new-offer', 'new-answer', 'ice-candidate', 'ip-changed'].includes(data.type) &&
-           data.fromId &&
-           typeof data.timestamp === 'number';
+  private handleLocationUpdate(message: any, peerId: string) {
+    if (this.onLocationReceived && message.data) {
+      this.onLocationReceived(peerId, message.data);
+    }
   }
 
-  private handleMeshData(meshData: any, peerId: string): void {
-    console.log('MessageRouter: Received mesh data from', peerId);
-    
-    const event = new CustomEvent('webrtc-mesh-data-received', {
-      detail: { meshData, fromPeerId: peerId }
-    });
-    window.dispatchEvent(event);
+  private async handleLocationRequest(peerId: string) {
+    if (!this.isServer) {
+      try {
+        const location = await this.getCurrentLocation();
+        if (location) {
+          const peer = this.peerManager.getPeer(peerId);
+          if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
+            peer.dataChannel.send(JSON.stringify({
+              type: 'location_update',
+              data: location,
+              timestamp: Date.now()
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('Failed to handle location request:', error);
+      }
+    }
   }
 
-  private sendLocationRequestedEvent(): void {
-    const event = new CustomEvent('webrtc-location-requested');
-    window.dispatchEvent(event);
+  private handleSignalingMessage(message: any, peerId: string) {
+    console.log('Signaling message received:', message, 'from:', peerId);
+  }
+
+  private handleMeshData(message: any, peerId: string) {
+    console.log('Mesh data received:', message, 'from:', peerId);
+  }
+
+  private handleGenericMessage(message: any, peerId: string) {
+    if (this.onMessageReceived) {
+      const webrtcMessage: WebRTCMessage = {
+        type: message.type,
+        data: message.data,
+        timestamp: message.timestamp || Date.now(),
+        fromUserId: peerId
+      };
+      this.onMessageReceived(webrtcMessage, peerId);
+    }
+  }
+
+  private async getCurrentLocation(): Promise<any> {
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 30000
+        });
+      });
+
+      return {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      console.error('Failed to get current location:', error);
+      return null;
+    }
   }
 
   onLocationUpdate(callback: (userId: string, location: any) => void) {

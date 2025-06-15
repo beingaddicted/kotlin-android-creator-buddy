@@ -1,47 +1,20 @@
 
 export class WebRTCEventHandler {
-  private onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
-  private onIceCandidate?: (candidate: RTCIceCandidate) => void;
-  private onDataChannel?: (channel: RTCDataChannel) => void;
-
-  setupConnectionEvents(
-    connection: RTCPeerConnection,
-    callbacks: {
-      onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
-      onIceCandidate?: (candidate: RTCIceCandidate) => void;
-      onDataChannel?: (channel: RTCDataChannel) => void;
+  dispatchEvent(eventType: string, detail: any): void {
+    try {
+      const event = new CustomEvent(eventType, { detail });
+      window.dispatchEvent(event);
+      console.log(`WebRTC event dispatched: ${eventType}`, detail);
+    } catch (error) {
+      console.error('Failed to dispatch WebRTC event:', error);
     }
-  ): void {
-    this.onConnectionStateChange = callbacks.onConnectionStateChange;
-    this.onIceCandidate = callbacks.onIceCandidate;
-    this.onDataChannel = callbacks.onDataChannel;
+  }
 
-    connection.onicecandidate = (event) => {
-      if (event.candidate && this.onIceCandidate) {
-        this.onIceCandidate(event.candidate);
-      }
-    };
+  addEventListener(eventType: string, handler: EventListener): void {
+    window.addEventListener(eventType, handler);
+  }
 
-    connection.onconnectionstatechange = () => {
-      console.log('Connection state changed:', connection.connectionState);
-      if (this.onConnectionStateChange) {
-        this.onConnectionStateChange(connection.connectionState);
-      }
-    };
-
-    connection.oniceconnectionstatechange = () => {
-      console.log('ICE connection state:', connection.iceConnectionState);
-      if (connection.iceConnectionState === 'disconnected' || connection.iceConnectionState === 'failed') {
-        if (this.onConnectionStateChange) {
-          this.onConnectionStateChange('failed');
-        }
-      }
-    };
-
-    connection.ondatachannel = (event) => {
-      if (this.onDataChannel) {
-        this.onDataChannel(event.channel);
-      }
-    };
+  removeEventListener(eventType: string, handler: EventListener): void {
+    window.removeEventListener(eventType, handler);
   }
 }

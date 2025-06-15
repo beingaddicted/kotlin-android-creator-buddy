@@ -1,31 +1,4 @@
 
-export interface WebRTCMessage {
-  type: 'location' | 'join-org' | 'member-status' | 'location-request' | 'mesh-data' | 'auth-challenge' | 'auth-response' | 'secure-message';
-  data: any;
-  userId?: string;
-  organizationId?: string;
-  timestamp: number;
-  // Security fields
-  encrypted?: boolean;
-  signature?: string;
-  senderDeviceId?: string;
-}
-
-export interface PeerConnection {
-  id: string;
-  name: string;
-  organizationId: string;
-  connection: RTCPeerConnection;
-  dataChannel?: RTCDataChannel;
-  status: 'connecting' | 'connected' | 'disconnected';
-  lastSeen: number;
-  ipAddress?: string;
-  // Security fields
-  isAuthenticated?: boolean;
-  accessToken?: string;
-  lastAuthCheck?: number;
-}
-
 export interface WebRTCServerOffer {
   type: 'webrtc_server_offer';
   offer: RTCSessionDescriptionInit;
@@ -33,9 +6,36 @@ export interface WebRTCServerOffer {
   organizationId: string;
   organizationName: string;
   timestamp: number;
-  serverIp?: string;
-  // Security fields
-  requiresAuth?: boolean;
-  adminCertificate?: string;
-  networkToken?: string;
+  serverIp: string;
+}
+
+export interface PeerConnection {
+  id: string;
+  name: string;
+  organizationId?: string;
+  connection: RTCPeerConnection;
+  status: 'connecting' | 'connected' | 'disconnected';
+  lastSeen: number;
+  dataChannel?: RTCDataChannel;
+}
+
+export interface WebRTCMessage {
+  type: string;
+  data: any;
+  timestamp: number;
+  fromUserId: string;
+}
+
+export interface LocationData {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  timestamp: number;
+}
+
+export interface SignalingData {
+  type: 'offer' | 'answer' | 'ice-candidate' | 'new-offer' | 'new-answer' | 'ip-change';
+  data: any;
+  fromPeerId: string;
+  toPeerId?: string;
 }

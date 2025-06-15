@@ -1,159 +1,24 @@
-import { WebRTCMessage, WebRTCServerOffer } from './types';
+
+import { PeerManager } from './PeerManager';
 
 export interface SignalingMessage {
-  type: 'new-offer' | 'new-answer' | 'ice-candidate' | 'ip-changed' | 'mesh-message';
+  type: 'offer' | 'answer' | 'ice-candidate' | 'new-offer' | 'new-answer' | 'ip-change';
   data: any;
-  fromId: string;
-  toId?: string; // If not specified, broadcast to all
-  timestamp: number;
+  fromPeerId: string;
+  toPeerId?: string;
 }
 
 export class SignalingService {
   private dataChannels = new Map<string, RTCDataChannel>();
+  private isServer = false;
   private signalingMessageHandler?: (message: SignalingMessage, fromPeerId: string) => void;
-  private isServer: boolean = false;
 
   setAsServer(isServer: boolean) {
     this.isServer = isServer;
   }
 
-  // Register a data channel for signaling
   registerDataChannel(peerId: string, dataChannel: RTCDataChannel) {
     this.dataChannels.set(peerId, dataChannel);
-    
-    dataChannel.addEventListener('message', (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        if (this.isSignalingMessage(message)) {
-          console.log('Received signaling message:', message.type, 'from:', peerId);
-          this.handleSignalingMessage(message, peerId);
-        }
-      } catch (error) {
-        console.error('Failed to parse signaling message:', error);
-      }
-    });
-  }
-
-  // Send new offer to specific peer (admin to client)
-  sendNewOffer(peerId: string, offer: WebRTCServerOffer) {
-    const message: SignalingMessage = {
-      type: 'new-offer',
-      data: offer,
-      fromId: this.isServer ? 'admin' : 'client',
-      toId: peerId,
-      timestamp: Date.now()
-    };
-    
-    this.sendSignalingMessage(peerId, message);
-  }
-
-  // Send new answer to admin (client to admin)
-  sendNewAnswer(adminId: string, answer: RTCSessionDescriptionInit) {
-    const message: SignalingMessage = {
-      type: 'new-answer',
-      data: answer,
-      fromId: 'client',
-      toId: adminId,
-      timestamp: Date.now()
-    };
-    
-    this.sendSignalingMessage(adminId, message);
-  }
-
-  // Send ICE candidate to peer
-  sendIceCandidate(peerId: string, candidate: RTCIceCandidate) {
-    const message: SignalingMessage = {
-      type: 'ice-candidate',
-      data: candidate,
-      fromId: this.isServer ? 'admin' : 'client',
-      toId: peerId,
-      timestamp: Date.now()
-    };
-    
-    this.sendSignalingMessage(peerId, message);
-  }
-
-  // Notify about IP change
-  notifyIpChange(newIp: string) {
-    const message: SignalingMessage = {
-      type: 'ip-changed',
-      data: { newIp },
-      fromId: this.isServer ? 'admin' : 'client',
-      timestamp: Date.now()
-    };
-    
-    // Broadcast to all connected peers
-    this.broadcastSignalingMessage(message);
-  }
-
-  // Send mesh message to specific peer
-  sendMeshMessage(peerId: string, meshData: any) {
-    const message: SignalingMessage = {
-      type: 'mesh-message',
-      data: meshData,
-      fromId: this.isServer ? 'admin' : 'client',
-      toId: peerId,
-      timestamp: Date.now()
-    };
-    
-    this.sendSignalingMessage(peerId, message);
-  }
-
-  // Broadcast mesh message to all peers
-  broadcastMeshMessage(meshData: any) {
-    const message: SignalingMessage = {
-      type: 'mesh-message',
-      data: meshData,
-      fromId: this.isServer ? 'admin' : 'client',
-      timestamp: Date.now()
-    };
-    
-    this.broadcastSignalingMessage(message);
-  }
-
-  private sendSignalingMessage(peerId: string, message: SignalingMessage) {
-    const dataChannel = this.dataChannels.get(peerId);
-    if (dataChannel && dataChannel.readyState === 'open') {
-      try {
-        dataChannel.send(JSON.stringify(message));
-        console.log('Sent signaling message:', message.type, 'to:', peerId);
-      } catch (error) {
-        console.error('Failed to send signaling message:', error);
-      }
-    } else {
-      console.warn('Cannot send signaling message - data channel not available for peer:', peerId);
-    }
-  }
-
-  private broadcastSignalingMessage(message: SignalingMessage) {
-    this.dataChannels.forEach((dataChannel, peerId) => {
-      if (dataChannel.readyState === 'open') {
-        try {
-          dataChannel.send(JSON.stringify(message));
-          console.log('Broadcasted signaling message:', message.type, 'to:', peerId);
-        } catch (error) {
-          console.error('Failed to broadcast signaling message to', peerId, error);
-        }
-      }
-    });
-  }
-
-  private handleSignalingMessage(message: SignalingMessage, fromPeerId: string) {
-    if (this.signalingMessageHandler) {
-      this.signalingMessageHandler(message, fromPeerId);
-    }
-  }
-
-  private isSignalingMessage(data: any): data is SignalingMessage {
-    return data && 
-           typeof data === 'object' &&
-           ['new-offer', 'new-answer', 'ice-candidate', 'ip-changed', 'mesh-message'].includes(data.type) &&
-           data.fromId &&
-           typeof data.timestamp === 'number';
-  }
-
-  setSignalingMessageHandler(callback: (message: SignalingMessage, fromPeerId: string) => void) {
-    this.signalingMessageHandler = callback;
   }
 
   removeDataChannel(peerId: string) {
@@ -162,5 +27,64 @@ export class SignalingService {
 
   clearDataChannels() {
     this.dataChannels.clear();
+  }
+
+  setSignalingMessageHandler(handler: (message: SignalingMessage, fromPeerId: string) => void) {
+    this.signalingMessageHandler = handler;
+  }
+
+  sendNewOffer(peerId: string, offer: RTCSessionDescriptionInit) {
+    this.sendSignalingMessage(peerId, {
+      type: 'new-offer',
+      data: offer,
+      fromPeerId: 'server',
+      toPeerId: peerId
+    });
+  }
+
+  sendNewAnswer(adminId: string, answer: RTCSessionDescriptionInit) {
+    this.sendSignalingMessage(adminId, {
+      type: 'new-answer',
+      data: answer,
+      fromPeerId: 'client',
+      toPeerId: adminId
+    });
+  }
+
+  sendIceCandidate(peerId: string, candidate: RTCIceCandidate) {
+    this.sendSignalingMessage(peerId, {
+      type: 'ice-candidate',
+      data: candidate,
+      fromPeerId: this.isServer ? 'server' : 'client',
+      toPeerId: peerId
+    });
+  }
+
+  notifyIpChange(newIp: string) {
+    const message: SignalingMessage = {
+      type: 'ip-change',
+      data: { newIp },
+      fromPeerId: this.isServer ? 'server' : 'client'
+    };
+
+    this.dataChannels.forEach((dataChannel, peerId) => {
+      if (dataChannel.readyState === 'open') {
+        this.sendSignalingMessage(peerId, message);
+      }
+    });
+  }
+
+  private sendSignalingMessage(peerId: string, message: SignalingMessage) {
+    const dataChannel = this.dataChannels.get(peerId);
+    if (dataChannel && dataChannel.readyState === 'open') {
+      try {
+        dataChannel.send(JSON.stringify({
+          type: 'signaling',
+          data: message
+        }));
+      } catch (error) {
+        console.error('Failed to send signaling message:', error);
+      }
+    }
   }
 }
