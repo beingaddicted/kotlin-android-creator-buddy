@@ -1,4 +1,3 @@
-
 export interface BrowserCapabilities {
   webrtc: boolean;
   dataChannels: boolean;
@@ -69,7 +68,7 @@ export class BrowserCompatibilityManager {
 
   private testCapabilities(): BrowserCapabilities {
     return {
-      webrtc: !!(window.RTCPeerConnection || window.webkitRTCPeerConnection),
+      webrtc: !!(window.RTCPeerConnection),
       dataChannels: this.testDataChannels(),
       getStats: this.testGetStats(),
       restartIce: this.testRestartIce(),
