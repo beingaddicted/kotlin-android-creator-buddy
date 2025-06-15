@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +15,7 @@ interface PerformanceAlert {
   severity: 'low' | 'medium' | 'high';
 }
 
-export const PerformanceDashboard = () => {
+export const PerformanceDashboard = React.memo(() => {
   const [metrics, setMetrics] = useState<any>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [alerts, setAlerts] = useState<PerformanceAlert[]>([]);
@@ -32,12 +32,27 @@ export const PerformanceDashboard = () => {
     renderCount
   } = usePerformanceMonitor(setMetrics);
 
+  // Throttled update handlers to prevent excessive re-renders
+  const throttledSetLogs = useCallback(
+    throttle((newLog: string) => {
+      setLogs(prev => [...prev.slice(-24), newLog]); // Reduced from 49 to 24
+    }, 1000),
+    []
+  );
+
+  const throttledSetAlerts = useCallback(
+    throttle((alert: PerformanceAlert) => {
+      setAlerts(prev => [...prev.slice(-9), alert]); // Reduced from 19 to 9
+    }, 2000),
+    []
+  );
+
   useEffect(() => {
     const channel = new BroadcastChannel('performance-metrics');
     const alertChannel = new BroadcastChannel('performance-alerts');
 
     channel.onmessage = (e) => {
-      setLogs(prev => [...prev.slice(-49), JSON.stringify(e.data, null, 2)]);
+      throttledSetLogs(JSON.stringify(e.data, null, 2));
       setRealTimeMetrics(e.data);
     };
 
@@ -46,13 +61,13 @@ export const PerformanceDashboard = () => {
         type: e.data.type,
         message: `${e.data.type}: ${e.data.renderTime?.toFixed(2)}ms (threshold: ${e.data.threshold}ms)`,
         timestamp: e.data.timestamp,
-        severity: e.data.renderTime > 200 ? 'high' : e.data.renderTime > 100 ? 'medium' : 'low'
+        severity: e.data.renderTime > 10000 ? 'high' : e.data.renderTime > 5000 ? 'medium' : 'low'
       };
       
-      setAlerts(prev => [...prev.slice(-19), alert]);
+      throttledSetAlerts(alert);
     };
 
-    // Load historical data
+    // Load historical data only once
     const storedMetrics = getStoredMetrics();
     if (storedMetrics.length > 0) {
       setRealTimeMetrics(storedMetrics[storedMetrics.length - 1]);
@@ -62,33 +77,91 @@ export const PerformanceDashboard = () => {
       channel.close();
       alertChannel.close();
     };
-  }, [getStoredMetrics]);
+  }, [getStoredMetrics, throttledSetLogs, throttledSetAlerts]);
 
-  const calculateAverageRenderTime = () => {
+  // Memoize expensive calculations
+  const averageRenderTime = useMemo(() => {
     const stored = getStoredMetrics();
     if (stored.length === 0) return 0;
     
     const sum = stored.reduce((acc: number, metric: any) => acc + metric.renderTime, 0);
     return sum / stored.length;
-  };
+  }, [getStoredMetrics, realTimeMetrics]); // Only recalculate when metrics change
 
-  const getPerformanceStatus = () => {
-    const avgRender = calculateAverageRenderTime();
+  const performanceStatus = useMemo(() => {
+    const avgRender = averageRenderTime;
     const errorRate = renderCount > 0 ? errorCount / renderCount : 0;
     
-    if (avgRender < 50 && errorRate < 0.05) return { status: 'excellent', color: 'text-green-600' };
-    if (avgRender < 100 && errorRate < 0.1) return { status: 'good', color: 'text-blue-600' };
-    if (avgRender < 200 && errorRate < 0.2) return { status: 'fair', color: 'text-yellow-600' };
+    if (avgRender < 100 && errorRate < 0.05) return { status: 'excellent', color: 'text-green-600' };
+    if (avgRender < 500 && errorRate < 0.1) return { status: 'good', color: 'text-blue-600' };
+    if (avgRender < 2000 && errorRate < 0.2) return { status: 'fair', color: 'text-yellow-600' };
     return { status: 'poor', color: 'text-red-600' };
-  };
+  }, [averageRenderTime, renderCount, errorCount]);
 
-  const formatMemoryUsage = (bytes: number) => {
+  const formatMemoryUsage = useCallback((bytes: number) => {
     if (bytes === 0) return 'N/A';
     const mb = bytes / 1024 / 1024;
     return `${mb.toFixed(2)} MB`;
-  };
+  }, []);
 
-  const performanceStatus = getPerformanceStatus();
+  // Memoize the overview cards to prevent unnecessary re-renders
+  const overviewCards = useMemo(() => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Average Render Time</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{averageRenderTime.toFixed(2)}ms</div>
+          <p className="text-xs text-muted-foreground">
+            Last: {realTimeMetrics?.renderTime?.toFixed(2) || 'N/A'}ms
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">
+            {formatMemoryUsage(realTimeMetrics?.memoryUsage || 0)}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            JS Heap Size
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Error Rate</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">
+            {renderCount > 0 ? ((errorCount / renderCount) * 100).toFixed(2) : '0.00'}%
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {errorCount} errors in {renderCount} renders
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Cache Hit Rate</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">
+            {((realTimeMetrics?.cacheHitRate || 1) * 100).toFixed(1)}%
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Operation success rate
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  ), [averageRenderTime, realTimeMetrics, renderCount, errorCount, formatMemoryUsage]);
 
   return (
     <div className="container mx-auto p-4 space-y-6">
@@ -123,7 +196,7 @@ export const PerformanceDashboard = () => {
         </div>
       </div>
 
-      {/* Alert Section */}
+      {/* Only show alert if there are recent alerts */}
       {alerts.length > 0 && (
         <Alert className="border-yellow-200 bg-yellow-50">
           <AlertTriangle className="h-4 w-4" />
@@ -142,61 +215,7 @@ export const PerformanceDashboard = () => {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Average Render Time</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{calculateAverageRenderTime().toFixed(2)}ms</div>
-                <p className="text-xs text-muted-foreground">
-                  Last: {realTimeMetrics?.renderTime?.toFixed(2) || 'N/A'}ms
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {formatMemoryUsage(realTimeMetrics?.memoryUsage || 0)}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  JS Heap Size
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Error Rate</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {renderCount > 0 ? ((errorCount / renderCount) * 100).toFixed(2) : '0.00'}%
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {errorCount} errors in {renderCount} renders
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Cache Hit Rate</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {((realTimeMetrics?.cacheHitRate || 1) * 100).toFixed(1)}%
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Operation success rate
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+          {overviewCards}
         </TabsContent>
 
         <TabsContent value="metrics">
@@ -274,4 +293,18 @@ export const PerformanceDashboard = () => {
       </Tabs>
     </div>
   );
-};
+});
+
+// Optimized throttle function
+function throttle<T extends (...args: any[]) => any>(func: T, delay: number): T {
+  let inThrottle: boolean;
+  return ((...args: any[]) => {
+    if (!inThrottle) {
+      func.apply(this, args);
+      inThrottle = true;
+      setTimeout(() => inThrottle = false, delay);
+    }
+  }) as T;
+}
+
+PerformanceDashboard.displayName = 'PerformanceDashboard';

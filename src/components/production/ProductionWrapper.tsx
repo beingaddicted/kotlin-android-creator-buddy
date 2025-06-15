@@ -21,44 +21,43 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
   const [healthStatus, setHealthStatus] = useState<'healthy' | 'warning' | 'critical'>('healthy');
   const [showHealthWarning, setShowHealthWarning] = useState(false);
 
-  // Debounced toast notifications to prevent spam
+  // Much more aggressive debouncing to prevent toast spam
   const showToast = useCallback(
     debounce((message: string, type: 'success' | 'error' | 'warning') => {
       if (type === 'success') toast.success(message);
       else if (type === 'error') toast.error(message);
       else toast.warning(message);
-    }, 2000),
+    }, 5000), // Increased from 2000 to 5000
     []
   );
 
-  // Memoize health status update handler
+  // Simplified health status update handler
   const handleHealthChange = useCallback((status: any) => {
     setHealthStatus(status.overall);
     
+    // Only show critical warnings, ignore warning level
     if (status.overall === 'critical' && !showHealthWarning) {
       setShowHealthWarning(true);
       showToast('Application health critical - performance may be affected', 'error');
-    } else if (status.overall === 'warning' && !showHealthWarning) {
-      showToast('Application performance warning detected', 'warning');
     }
   }, [showHealthWarning, showToast]);
 
-  // Throttled user action handler
+  // Much more throttled user action handler
   const handleUserAction = useCallback(
     throttle((action: string, context: any = {}) => {
       measureOperation(`user_action_${action}`, () => {
         analytics.trackUserAction(action, context);
         healthMonitor.recordOperation(true);
       });
-    }, 1000),
+    }, 3000), // Increased from 1000 to 3000
     [measureOperation]
   );
 
   useEffect(() => {
-    // Initialize analytics with reduced frequency
+    // Initialize analytics with minimal frequency
     analytics.initialize(user?.id);
 
-    // Start health monitoring with longer intervals
+    // Start health monitoring with much longer intervals
     healthMonitor.startMonitoring();
     healthMonitor.onHealthChange(handleHealthChange);
 
@@ -74,7 +73,7 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
       timestamp: Date.now()
     });
 
-    // Throttled error handlers
+    // Very throttled error handlers
     const handleError = throttle((event: ErrorEvent) => {
       analytics.trackEvent('javascript_error', {
         message: event.message,
@@ -82,7 +81,7 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
         timestamp: Date.now()
       });
       healthMonitor.recordOperation(false);
-    }, 5000);
+    }, 10000); // Increased from 5000 to 10000
 
     const handleUnhandledRejection = throttle((event: PromiseRejectionEvent) => {
       analytics.trackEvent('unhandled_promise_rejection', {
@@ -90,31 +89,31 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
         timestamp: Date.now()
       });
       healthMonitor.recordOperation(false);
-    }, 5000);
+    }, 10000); // Increased from 5000 to 10000
 
     window.addEventListener('error', handleError);
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
-    // WebRTC event listeners with throttling
+    // Heavily throttled WebRTC event listeners
     const webrtcListeners = [
       ['webrtc-connection-attempt', throttle((event: CustomEvent) => {
         const { success, peerId, duration } = event.detail;
         analytics.trackConnectionAttempt(peerId, success, duration);
         healthMonitor.recordConnectionAttempt(success);
-      }, 2000)],
+      }, 5000)], // Increased from 2000 to 5000
       
       ['webrtc-signaling', throttle((event: CustomEvent) => {
         const { type, peerId } = event.detail;
         analytics.trackSignalingEvent(type, peerId);
-      }, 1000)],
+      }, 3000)], // Increased from 1000 to 3000
       
       ['webrtc-location-update', throttle(() => {
         analytics.trackLocationShare(true);
-      }, 5000)],
+      }, 10000)], // Increased from 5000 to 10000
       
       ['webrtc-performance-warning', throttle((event: CustomEvent) => {
         analytics.trackEvent('performance_warning', event.detail);
-      }, 10000)]
+      }, 30000)] // Increased from 10000 to 30000
     ];
 
     webrtcListeners.forEach(([event, handler]) => {
@@ -132,7 +131,7 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
     };
   }, [user?.id, isOnline, isMonitoring, startMonitor, handleHealthChange]);
 
-  // Network status effect with reduced frequency
+  // Network status effect with heavy throttling
   useEffect(() => {
     if (wasOffline && isOnline) {
       const offlineTime = localStorage.getItem('offline_timestamp');
@@ -147,7 +146,7 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
     }
   }, [isOnline, wasOffline, showToast]);
 
-  // Optimized click handler with throttling
+  // Heavily throttled click handler
   useEffect(() => {
     const handleClick = throttle((event: MouseEvent) => {
       const target = event.target as HTMLElement;
@@ -155,7 +154,7 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
         const buttonText = target.textContent || target.closest('button')?.textContent || 'unknown';
         handleUserAction('button_click', { buttonText });
       }
-    }, 500);
+    }, 2000), // Increased from 500 to 2000
 
     document.addEventListener('click', handleClick);
     return () => document.removeEventListener('click', handleClick);
@@ -173,12 +172,14 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
         }
       </div>
 
-      <div className={`p-2 rounded-full shadow-lg transition-colors duration-300 ${
-        healthStatus === 'healthy' ? 'bg-green-500' :
-        healthStatus === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
-      }`}>
-        <Activity className="w-4 h-4 text-white" />
-      </div>
+      {/* Only show health indicator if there's an actual issue */}
+      {healthStatus !== 'healthy' && (
+        <div className={`p-2 rounded-full shadow-lg transition-colors duration-300 ${
+          healthStatus === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
+        }`}>
+          <Activity className="w-4 h-4 text-white" />
+        </div>
+      )}
     </div>
   ), [isOnline, healthStatus]);
 
@@ -193,11 +194,11 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
           </div>
         )}
 
-        {/* Health Warning */}
+        {/* Only show health warning for critical issues */}
         {showHealthWarning && healthStatus === 'critical' && (
-          <div className="fixed top-0 left-0 right-0 z-40 bg-yellow-600 text-white p-2 text-center text-sm animate-fade-in">
+          <div className="fixed top-0 left-0 right-0 z-40 bg-red-600 text-white p-2 text-center text-sm animate-fade-in">
             <AlertTriangle className="inline w-4 h-4 mr-2" />
-            Application performance issues detected - consider refreshing the page
+            Critical performance issues detected - consider refreshing the page
             <button 
               onClick={() => setShowHealthWarning(false)}
               className="ml-4 underline hover:no-underline focus:outline-none"
@@ -217,7 +218,7 @@ export const ProductionWrapper = React.memo<ProductionWrapperProps>(({ children 
   );
 });
 
-// Utility functions for throttling and debouncing
+// Optimized utility functions with better performance
 function throttle<T extends (...args: any[]) => any>(func: T, delay: number): T {
   let inThrottle: boolean;
   return ((...args: any[]) => {
