@@ -7,18 +7,25 @@ let Purchase: any = null;
 
 // Dynamically import billing only on native platforms
 const initializeBilling = async () => {
-  if (Capacitor.isNativePlatform()) {
-    try {
-      const billingModule = await import('@capacitor-community/billing');
-      Billing = billingModule.Billing;
-      Purchase = billingModule.Purchase;
-      return true;
-    } catch (error) {
-      console.warn('Billing plugin not available:', error);
+  if (!Capacitor.isNativePlatform()) {
+    return false;
+  }
+  
+  try {
+    // Use dynamic import with a more specific error handling
+    const billingModule = await import('@capacitor-community/billing').catch(() => null);
+    if (!billingModule) {
+      console.warn('Billing plugin not available: module not found');
       return false;
     }
+    
+    Billing = billingModule.Billing;
+    Purchase = billingModule.Purchase;
+    return true;
+  } catch (error) {
+    console.warn('Billing plugin not available:', error);
+    return false;
   }
-  return false;
 };
 
 export interface Product {
