@@ -1,5 +1,20 @@
 
-import { Billing, Purchase } from '@capacitor-community/billing';
+import { Capacitor } from '@capacitor/core';
+
+let Billing: any = null;
+let Purchase: any = null;
+
+// Dynamically import billing only on native platforms
+if (Capacitor.isNativePlatform()) {
+  try {
+    const billingModule = await import('@capacitor-community/billing');
+    Billing = billingModule.Billing;
+    Purchase = billingModule.Purchase;
+  } catch (error) {
+    console.warn('Billing plugin not available:', error);
+  }
+}
+
 import { supabase } from '@/integrations/supabase/client';
 
 export interface Product {
@@ -25,6 +40,12 @@ export class GooglePlayService {
 
   async initialize(): Promise<boolean> {
     if (this.isInitialized) return true;
+    
+    if (!Capacitor.isNativePlatform() || !Billing) {
+      console.warn('Google Play Billing not available on this platform');
+      return false;
+    }
+
     try {
       await Billing.initialize();
       this.isInitialized = true;
@@ -37,6 +58,11 @@ export class GooglePlayService {
   }
 
   async getProductDetails(productId: string): Promise<Product | undefined> {
+    if (!Capacitor.isNativePlatform() || !Billing) {
+      console.warn('Google Play Billing not available on this platform');
+      return undefined;
+    }
+
     if (!this.isInitialized) await this.initialize();
     if (this.products.has(productId)) {
         return this.products.get(productId);
@@ -59,6 +85,13 @@ export class GooglePlayService {
     subscriptionId?: string;
     error?: string;
   }> {
+    if (!Capacitor.isNativePlatform() || !Billing) {
+      return {
+        success: false,
+        error: 'Google Play Billing not available on this platform'
+      };
+    }
+
     if (!this.isInitialized) await this.initialize();
 
     try {
@@ -88,7 +121,12 @@ export class GooglePlayService {
     }
   }
 
-  async refreshSubscriptionStatus(): Promise<Purchase[]> {
+  async refreshSubscriptionStatus(): Promise<any[]> {
+    if (!Capacitor.isNativePlatform() || !Billing) {
+      console.warn('Google Play Billing not available on this platform');
+      return [];
+    }
+
     if (!this.isInitialized) await this.initialize();
     try {
       const result = await Billing.getPurchases();

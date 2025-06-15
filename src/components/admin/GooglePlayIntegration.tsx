@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,24 +23,28 @@ export const GooglePlayIntegration = ({ organizationId, memberCount }: GooglePla
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [product, setProduct] = useState<Product | null>(null);
   const [isLoadingProduct, setIsLoadingProduct] = useState(true);
+  const [isBillingAvailable, setIsBillingAvailable] = useState(false);
 
   useEffect(() => {
     const initBilling = async () => {
       setIsLoadingProduct(true);
-      await googlePlayService.initialize();
-      try {
-        const details = await googlePlayService.getProductDetails(GOOGLE_PLAY_PRODUCT_ID);
-        if (details) {
-          setProduct(details);
-        } else {
-          toast.error('Could not load subscription details from Google Play.');
+      const initialized = await googlePlayService.initialize();
+      setIsBillingAvailable(initialized);
+      
+      if (initialized) {
+        try {
+          const details = await googlePlayService.getProductDetails(GOOGLE_PLAY_PRODUCT_ID);
+          if (details) {
+            setProduct(details);
+          } else {
+            toast.error('Could not load subscription details from Google Play.');
+          }
+        } catch (error) {
+          console.error("Failed to fetch product details", error);
+          toast.error("Could not load subscription details from Google Play.");
         }
-      } catch (error) {
-        console.error("Failed to fetch product details", error);
-        toast.error("Could not load subscription details from Google Play.");
-      } finally {
-        setIsLoadingProduct(false);
       }
+      setIsLoadingProduct(false);
     };
     initBilling();
   }, []);
@@ -93,6 +96,27 @@ export const GooglePlayIntegration = ({ organizationId, memberCount }: GooglePla
   const handleCancelSubscription = () => {
     toast.info('To cancel your subscription, please go to the Google Play Store app on your device.');
   };
+  
+  if (!isBillingAvailable) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <ShoppingCart className="w-5 h-5" />
+            <span>Google Play Store Integration</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Google Play Billing is only available on Android devices. Please use the mobile app to manage your subscription.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }
   
   return (
     <Card>
