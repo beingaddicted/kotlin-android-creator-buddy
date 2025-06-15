@@ -1,15 +1,16 @@
 
 export class MiniServerBridge {
-  private isServerRunning = false;
+  private serverRunning = false;
   private serverStats = {
     startTime: null as number | null,
     connections: 0,
     messages: 0
   };
+  private onServerOfferReadyCallback?: (offer: any) => void;
 
   async startMiniServer(organizationId: string): Promise<any> {
     try {
-      this.isServerRunning = true;
+      this.serverRunning = true;
       this.serverStats.startTime = Date.now();
       this.serverStats.connections = 0;
       this.serverStats.messages = 0;
@@ -23,23 +24,27 @@ export class MiniServerBridge {
       };
     } catch (error) {
       console.error('Failed to start mini server:', error);
-      this.isServerRunning = false;
+      this.serverRunning = false;
       throw error;
     }
   }
 
   async stopMiniServer(): Promise<void> {
-    this.isServerRunning = false;
+    this.serverRunning = false;
     this.serverStats.startTime = null;
     console.log('Mini server stopped');
   }
 
   isServerRunning(): boolean {
-    return this.isServerRunning;
+    return this.serverRunning;
   }
 
   getServerStats(): any {
     return { ...this.serverStats };
+  }
+
+  onServerOfferReady(callback: (offer: any) => void): void {
+    this.onServerOfferReadyCallback = callback;
   }
 
   incrementConnections(): void {

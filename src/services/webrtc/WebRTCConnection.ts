@@ -1,77 +1,92 @@
 
 export class WebRTCConnection {
-  private connection: RTCPeerConnection | null = null;
-  private pendingIceCandidates: RTCIceCandidate[] = [];
-  private isRemoteDescriptionSet = false;
+  private peerConnection: RTCPeerConnection | null = null;
+  private dataChannel: RTCDataChannel | null = null;
+  private connectionState: RTCPeerConnectionState = 'new';
+  private onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
 
-  createConnection(): RTCPeerConnection {
-    this.connection = new RTCPeerConnection({
+  constructor() {
+    this.setupPeerConnection();
+  }
+
+  private setupPeerConnection(): void {
+    const config: RTCConfiguration = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
       ]
-    });
+    };
 
-    return this.connection;
-  }
-
-  getConnection(): RTCPeerConnection | null {
-    return this.connection;
-  }
-
-  async createOffer(options?: RTCOfferOptions): Promise<RTCSessionDescriptionInit> {
-    if (!this.connection) throw new Error('No connection established');
+    this.peerConnection = new RTCPeerConnection(config);
     
-    const offer = await this.connection.createOffer(options);
-    await this.connection.setLocalDescription(offer);
+    this.peerConnection.onconnectionstatechange = () => {
+      if (this.peerConnection) {
+        this.connectionState = this.peerConnection.connectionState;
+        this.onConnectionStateChange?.(this.connectionState);
+      }
+    };
+  }
+
+  getConnectionState(): RTCPeerConnectionState {
+    return this.connectionState;
+  }
+
+  onStateChange(callback: (state: RTCPeerConnectionState) => void): void {
+    this.onConnectionStateChange = callback;
+  }
+
+  async createOffer(): Promise<RTCSessionDescriptionInit> {
+    if (!this.peerConnection) throw new Error('Peer connection not available');
+    
+    const offer = await this.peerConnection.createOffer();
+    await this.peerConnection.setLocalDescription(offer);
     return offer;
   }
 
-  async createAnswer(): Promise<RTCSessionDescriptionInit> {
-    if (!this.connection) throw new Error('No connection established');
+  async createAnswer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {
+    if (!this.peerConnection) throw new Error('Peer connection not available');
     
-    const answer = await this.connection.createAnswer();
-    await this.connection.setLocalDescription(answer);
+    await this.peerConnection.setRemoteDescription(offer);
+    const answer = await this.peerConnection.createAnswer();
+    await this.peerConnection.setLocalDescription(answer);
     return answer;
   }
 
   async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
-    if (!this.connection) throw new Error('No connection established');
-    
-    await this.connection.setRemoteDescription(description);
-    this.isRemoteDescriptionSet = true;
-    await this.processPendingIceCandidates();
+    if (!this.peerConnection) throw new Error('Peer connection not available');
+    await this.peerConnection.setRemoteDescription(description);
   }
 
-  async addIceCandidate(candidate: RTCIceCandidate): Promise<void> {
-    if (!this.connection) throw new Error('No connection established');
-    
-    if (this.isRemoteDescriptionSet) {
-      await this.connection.addIceCandidate(candidate);
-    } else {
-      this.pendingIceCandidates.push(candidate);
+  async addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
+    if (!this.peerConnection) throw new Error('Peer connection not available');
+    await this.peerConnection.addIceCandidate(candidate);
+  }
+
+  async testConnectivity(): Promise<boolean> {
+    try {
+      // Simple connectivity test
+      return this.peerConnection?.connectionState !== 'failed';
+    } catch (error) {
+      console.error('Connectivity test failed:', error);
+      return false;
     }
-  }
-
-  async processPendingIceCandidates(): Promise<void> {
-    if (!this.connection || !this.isRemoteDescriptionSet) return;
-    
-    for (const candidate of this.pendingIceCandidates) {
-      await this.connection.addIceCandidate(candidate);
-    }
-    this.pendingIceCandidates = [];
-  }
-
-  getConnectionState(): RTCPeerConnectionState {
-    return this.connection?.connectionState || 'closed';
   }
 
   close(): void {
-    if (this.connection) {
-      this.connection.close();
-      this.connection = null;
+    if (this.dataChannel) {
+      this.dataChannel.close();
+      this.dataChannel = null;
     }
-    this.pendingIceCandidates = [];
-    this.isRemoteDescriptionSet = false;
+    
+    if (this.peerConnection) {
+      this.peerConnection.close();
+      this.peerConnection = null;
+    }
+    
+    this.connectionState = 'closed';
+  }
+
+  getPeerConnection(): RTCPeerConnection | null {
+    return this.peerConnection;
   }
 }

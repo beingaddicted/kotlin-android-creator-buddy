@@ -3,6 +3,7 @@ import { WebRTCServiceCore } from './webrtc/WebRTCServiceCore';
 import { WebRTCServerManager } from './webrtc/WebRTCServerManager';
 import { WebRTCClientManager } from './webrtc/WebRTCClientManager';
 import { WebRTCEventManager } from './webrtc/WebRTCEventManager';
+import { WebRTCDiagnosticManager } from './webrtc/WebRTCDiagnosticManager';
 import { WebRTCServerOffer, PeerConnection } from './webrtc/types';
 
 export class WebRTCService {
@@ -10,6 +11,7 @@ export class WebRTCService {
   private serverManager: WebRTCServerManager;
   private clientManager: WebRTCClientManager;
   private eventManager: WebRTCEventManager;
+  private diagnosticManager: WebRTCDiagnosticManager;
 
   constructor() {
     this.core = new WebRTCServiceCore();
@@ -18,7 +20,7 @@ export class WebRTCService {
       this.core.webrtcConnection,
       this.core.connectionManager,
       this.core.offerManager,
-      this.core.reconnectionManager
+      this.core.autoReconnectionManager
     );
     
     this.clientManager = new WebRTCClientManager(
@@ -27,6 +29,8 @@ export class WebRTCService {
       this.core.reconnectionManager,
       this.core.offerManager
     );
+    
+    this.diagnosticManager = new WebRTCDiagnosticManager();
     
     this.eventManager = new WebRTCEventManager(
       this.core.webrtcConnection,
@@ -42,6 +46,12 @@ export class WebRTCService {
   }
 
   // Server methods
+  async createServerOffer(organizationId: string, organizationName: string): Promise<WebRTCServerOffer> {
+    const adminId = `admin_${Date.now()}`;
+    this.core.updateStates(true, adminId, organizationId);
+    return await this.serverManager.createServerOffer(organizationId, organizationName, adminId);
+  }
+
   async startServer(organizationId: string, organizationName: string, adminId: string): Promise<WebRTCServerOffer> {
     this.core.updateStates(true, adminId, organizationId);
     this.eventManager = new WebRTCEventManager(
@@ -102,7 +112,6 @@ export class WebRTCService {
     if (this.core.isAdmin) {
       await this.serverManager.sendUpdatedOfferToAllClients();
     } else {
-      // Client reconnection logic
       const lastOffer = this.core.offerManager.getLastServerOffer();
       if (lastOffer) {
         await this.connectToServer(lastOffer, this.core.userId || 'client', 'User');
@@ -146,6 +155,63 @@ export class WebRTCService {
 
   getMiniServerStats(): any {
     return this.core.getMiniServerStats();
+  }
+
+  // Message sending
+  sendToPeer(peerId: string, message: any): void {
+    this.core.connectionManager.sendToPeer(peerId, message);
+  }
+
+  // Diagnostic methods
+  getBrowserCompatibility(): any {
+    return this.diagnosticManager.getBrowserCompatibility();
+  }
+
+  getDegradationLevel(): any {
+    return this.diagnosticManager.getDegradationLevel();
+  }
+
+  getErrorHistory(): any[] {
+    return this.diagnosticManager.getErrorHistory();
+  }
+
+  generateDiagnosticReport(): string {
+    return this.diagnosticManager.generateDiagnosticReport();
+  }
+
+  // Mesh network methods
+  getMeshNetworkStatus(): any {
+    return {
+      hasActiveAdmin: this.core.isAdmin,
+      temporaryServerId: null,
+      connectedDevices: this.getConnectedPeers(),
+      meshTopology: new Map()
+    };
+  }
+
+  getAllAdmins(): any[] {
+    return [{
+      deviceId: this.core.userId || 'unknown',
+      deviceName: 'Admin Device',
+      lastSeen: Date.now(),
+      isPrimary: true,
+      capabilities: ['admin']
+    }];
+  }
+
+  isPrimaryAdmin(): boolean {
+    return this.core.isAdmin;
+  }
+
+  canPerformAdminActions(): boolean {
+    return this.core.isAdmin;
+  }
+
+  getCurrentDeviceInfo(): any {
+    return {
+      deviceId: this.core.userId || 'unknown',
+      deviceType: this.core.isAdmin ? 'admin' : 'client'
+    };
   }
 
   private setupEventManagerCallbacks(): void {

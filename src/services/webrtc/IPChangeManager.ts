@@ -1,30 +1,24 @@
 
-export interface IPChangeEvent {
-  oldIP: string;
-  newIP: string;
-  source: 'local' | 'peer';
-  peerId?: string;
-  timestamp: number;
-}
-
 export class IPChangeManager {
   private currentIP: string | null = null;
   private isMonitoring = false;
   private monitoringInterval: NodeJS.Timeout | null = null;
-  private onIPChangeCallback?: (event: IPChangeEvent) => void;
-  private connectionInstable = false;
+  private onIPChangeCallback?: (newIP: string, oldIP: string) => void;
 
-  startMonitoring(): void {
+  async startMonitoring(): Promise<void> {
     if (this.isMonitoring) return;
     
     this.isMonitoring = true;
-    this.getCurrentIP().then(ip => {
-      this.currentIP = ip;
-    });
+    this.currentIP = await this.getCurrentIP();
     
-    this.monitoringInterval = setInterval(() => {
-      this.checkForIPChange();
-    }, 5000);
+    this.monitoringInterval = setInterval(async () => {
+      const newIP = await this.getCurrentIP();
+      if (newIP && newIP !== this.currentIP) {
+        const oldIP = this.currentIP;
+        this.currentIP = newIP;
+        this.onIPChangeCallback?.(newIP, oldIP || 'unknown');
+      }
+    }, 30000); // Check every 30 seconds
   }
 
   stopMonitoring(): void {
@@ -35,43 +29,22 @@ export class IPChangeManager {
     }
   }
 
-  onIPChange(callback: (event: IPChangeEvent) => void): void {
+  onIPChange(callback: (newIP: string, oldIP: string) => void): void {
     this.onIPChangeCallback = callback;
   }
 
-  setConnectionInstability(unstable: boolean): void {
-    this.connectionInstable = unstable;
-  }
-
-  private async checkForIPChange(): Promise<void> {
+  async getCurrentIP(): Promise<string> {
     try {
-      const newIP = await this.getCurrentIP();
-      
-      if (this.currentIP && newIP && this.currentIP !== newIP) {
-        const event: IPChangeEvent = {
-          oldIP: this.currentIP,
-          newIP: newIP,
-          source: 'local',
-          timestamp: Date.now()
-        };
-        
-        this.currentIP = newIP;
-        this.onIPChangeCallback?.(event);
-      }
-    } catch (error) {
-      console.error('Failed to check for IP change:', error);
-    }
-  }
-
-  private async getCurrentIP(): Promise<string | null> {
-    try {
-      // Using a public IP detection service
       const response = await fetch('https://api.ipify.org?format=json');
       const data = await response.json();
       return data.ip;
     } catch (error) {
       console.error('Failed to get current IP:', error);
-      return null;
+      return '';
     }
+  }
+
+  getCurrentIPSync(): string {
+    return this.currentIP || '';
   }
 }

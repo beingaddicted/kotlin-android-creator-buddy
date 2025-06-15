@@ -1,108 +1,77 @@
-import { PeerConnection } from './types';
-import { SignalingService, SignalingMessage } from './SignalingService';
-import { PeerManager } from './PeerManager';
-import { DataChannelManager } from './DataChannelManager';
-import { LocationManager } from './LocationManager';
-import { WebRTCMessage } from './types';
+
+import { PeerConnection, WebRTCMessage } from './types';
 
 export class ConnectionManager {
-  private peerManager: PeerManager;
-  private dataChannelManager: DataChannelManager;
-  private locationManager: LocationManager;
-  private signalingService: SignalingService;
+  private peers = new Map<string, PeerConnection>();
+  private onLocationUpdateCallback?: (userId: string, locationData: any) => void;
+  private onPeerStatusUpdateCallback?: (peers: PeerConnection[]) => void;
 
-  constructor() {
-    this.signalingService = new SignalingService();
-    this.peerManager = new PeerManager();
-    this.dataChannelManager = new DataChannelManager(this.peerManager, this.signalingService);
-    this.locationManager = new LocationManager(this.peerManager);
+  addPeer(peer: PeerConnection): void {
+    this.peers.set(peer.id, peer);
+    this.notifyPeerStatusUpdate();
   }
 
-  setAsServer(isServer: boolean) {
-    this.signalingService.setAsServer(isServer);
-    this.dataChannelManager.setAsServer(isServer);
-    this.locationManager.setAsServer(isServer);
-    
-    // Setup signaling message handler
-    this.signalingService.setSignalingMessageHandler((message, fromPeerId) => {
-      this.dataChannelManager.onSignalingMessage((msg, peerId) => {
-        // Forward to external handler if set
-      });
-    });
-  }
-
-  setupDataChannel(dataChannel: RTCDataChannel, peerId: string) {
-    this.dataChannelManager.setupDataChannel(dataChannel, peerId);
-  }
-
-  addPeer(peer: PeerConnection) {
-    this.peerManager.addPeer(peer);
+  removePeer(peerId: string): void {
+    this.peers.delete(peerId);
+    this.notifyPeerStatusUpdate();
   }
 
   getPeer(peerId: string): PeerConnection | undefined {
-    return this.peerManager.getPeer(peerId);
+    return this.peers.get(peerId);
   }
 
   getConnectedPeers(): PeerConnection[] {
-    return this.peerManager.getConnectedPeers();
+    return Array.from(this.peers.values());
   }
 
-  getAllPeers(): PeerConnection[] {
-    return this.peerManager.getAllPeers();
+  clearPeers(): void {
+    this.peers.clear();
+    this.notifyPeerStatusUpdate();
   }
 
-  // Location methods
-  requestLocationFromAllClients() {
-    this.locationManager.requestLocationFromAllClients();
+  requestLocationFromAllClients(): void {
+    this.peers.forEach((peer) => {
+      if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
+        try {
+          peer.dataChannel.send(JSON.stringify({
+            type: 'location_request',
+            timestamp: Date.now()
+          }));
+        } catch (error) {
+          console.error('Failed to request location from peer:', peer.id, error);
+        }
+      }
+    });
   }
 
-  requestLocationUpdate(peerId: string) {
-    this.locationManager.requestLocationUpdate(peerId);
+  sendToPeer(peerId: string, message: any): void {
+    const peer = this.getPeer(peerId);
+    if (peer?.dataChannel && peer.dataChannel.readyState === 'open') {
+      try {
+        peer.dataChannel.send(JSON.stringify(message));
+      } catch (error) {
+        console.error('Failed to send message to peer:', peerId, error);
+      }
+    }
   }
 
-  sendLocationUpdate(locationData: any, serverPeerId?: string) {
-    this.locationManager.sendLocationUpdate(locationData, serverPeerId);
+  onLocationUpdate(callback: (userId: string, locationData: any) => void): void {
+    this.onLocationUpdateCallback = callback;
   }
 
-  // Signaling methods
-  sendNewOffer(peerId: string, offer: any) {
-    this.signalingService.sendNewOffer(peerId, offer);
+  onPeerStatusUpdate(callback: (peers: PeerConnection[]) => void): void {
+    this.onPeerStatusUpdateCallback = callback;
   }
 
-  sendNewAnswer(adminId: string, answer: RTCSessionDescriptionInit) {
-    this.signalingService.sendNewAnswer(adminId, answer);
+  private notifyPeerStatusUpdate(): void {
+    if (this.onPeerStatusUpdateCallback) {
+      this.onPeerStatusUpdateCallback(this.getConnectedPeers());
+    }
   }
 
-  sendIceCandidate(peerId: string, candidate: RTCIceCandidate) {
-    this.signalingService.sendIceCandidate(peerId, candidate);
-  }
-
-  notifyIpChange(newIp: string) {
-    this.signalingService.notifyIpChange(newIp);
-  }
-
-  sendToPeer(peerId: string, data: { type: string, data: any }): void {
-    this.dataChannelManager.send(peerId, data);
-  }
-
-  onSignalingMessage(callback: (message: SignalingMessage, fromPeerId: string) => void) {
-    this.dataChannelManager.onSignalingMessage(callback);
-  }
-
-  clearPeers() {
-    this.peerManager.clearPeers();
-    this.signalingService.clearDataChannels();
-  }
-
-  onLocationUpdate(callback: (userId: string, location: any) => void) {
-    this.dataChannelManager.onLocationUpdate(callback);
-  }
-
-  onPeerStatusUpdate(callback: (peers: PeerConnection[]) => void) {
-    this.peerManager.onPeerStatusUpdate(callback);
-  }
-
-  onMessage(callback: (message: WebRTCMessage, fromPeerId: string) => void) {
-    this.dataChannelManager.onMessage(callback);
+  handleLocationUpdate(userId: string, locationData: any): void {
+    if (this.onLocationUpdateCallback) {
+      this.onLocationUpdateCallback(userId, locationData);
+    }
   }
 }

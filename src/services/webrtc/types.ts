@@ -24,6 +24,8 @@ export interface WebRTCMessage {
   data: any;
   timestamp: number;
   fromUserId: string;
+  senderDeviceId?: string;
+  encrypted?: boolean;
 }
 
 export interface LocationData {
