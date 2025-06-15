@@ -26,18 +26,14 @@ export class WebRTCManagerCollection {
       core.webrtcConnection,
       core.connectionManager,
       core.reconnectionManager,
-      core.offerManager,
-      core.ipChangeManager,
-      core.isAdmin
+      core.offerManager
     );
 
     this.serverManager = new WebRTCServerManager(
       core.webrtcConnection,
       core.connectionManager,
-      core.reconnectionManager,
       core.offerManager,
-      core.autoReconnectionManager,
-      core.ipChangeManager
+      core.autoReconnectionManager
     );
 
     this.clientManager = new WebRTCClientManager(

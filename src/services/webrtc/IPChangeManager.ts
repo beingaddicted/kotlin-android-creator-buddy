@@ -68,4 +68,4 @@ export class IPChangeManager {
   }
 }
 
-export { IPChangeEvent };
+export type { IPChangeEvent };
