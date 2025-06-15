@@ -75,10 +75,19 @@ export const UserRegistration = ({ qrData, onJoinRequest, onBack }: UserRegistra
 
       console.log('Sending join request message:', joinRequestMessage);
 
-      // Try to send via WebRTC service
-      const adminConnected = webRTCService.broadcastMessage(joinRequestMessage);
+      // Get connected peers and try to send to admin
+      const connectedPeers = webRTCService.getConnectedPeers();
+      let adminFound = false;
       
-      if (!adminConnected) {
+      // Try to find and send to admin peer
+      connectedPeers.forEach(peer => {
+        if (peer.peerId === qrData.adminId || peer.peerId.includes('admin')) {
+          webRTCService.sendToPeer(peer.peerId, joinRequestMessage);
+          adminFound = true;
+        }
+      });
+      
+      if (!adminFound) {
         console.log('No admin connected via WebRTC, dispatching event');
         // Fallback: dispatch event that admin might be listening for
         const event = new CustomEvent('webrtc-join-request', {

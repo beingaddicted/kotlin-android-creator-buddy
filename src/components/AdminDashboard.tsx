@@ -6,7 +6,7 @@ import { ArrowLeft, Plus, QrCode, Users, Building2, MapPin, Check, X, UserPlus, 
 import { OrganizationManager } from "./admin/OrganizationManager";
 import { QRGenerator } from "./admin/QRGenerator";
 import { MemberTracker } from "./admin/MemberTracker";
-import { BillingManager } from "./billing/BillingManager";
+import { BillingManager } from "./admin/BillingManager";
 import { webRTCService } from "@/services/WebRTCService";
 import { toast } from "sonner";
 import { JoinRequests, JoinRequest } from "./admin/JoinRequests";
