@@ -63,7 +63,7 @@ class QRService {
       const secureOfferData = {
         ...offerData,
         requiresAuth: true,
-        adminCertificate: window.securityManager?.deviceAuth?.getCertificate(),
+        adminCertificate: window.securityManager?.getCurrentDeviceId(),
         networkToken: window.securityManager?.generateNetworkToken()
       };
 

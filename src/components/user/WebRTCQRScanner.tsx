@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { QrCode, X } from "lucide-react";
 import { qrService } from "@/services/QRService";
-import { WebRTCServerOffer } from "@/services/WebRTCService";
+import { WebRTCServerOffer } from "@/services/webrtc/types";
 import { CameraScanner } from "./scanner/CameraScanner";
 import { ConnectionHandler } from "./scanner/ConnectionHandler";
 import { ConnectionStatus } from "./scanner/ConnectionStatus";
@@ -20,14 +20,19 @@ export const WebRTCQRScanner = ({ onConnectionEstablished, onClose }: WebRTCQRSc
   const [scannedOffer, setScannedOffer] = useState<WebRTCServerOffer | null>(null);
 
   const handleQRResult = async (qrString: string) => {
-    const qrData = qrService.parseQRData(qrString);
-    
-    if (qrData && 'type' in qrData && qrData.type === 'webrtc_server_offer') {
-      const offerData = qrData as WebRTCServerOffer;
-      setScannedOffer(offerData);
-      await connectToServer(offerData);
-    } else {
-      setError("Invalid WebRTC server QR code. Please scan the server QR from admin.");
+    try {
+      const qrData = await qrService.parseQRData(qrString);
+      
+      if (qrData && 'type' in qrData && qrData.type === 'webrtc_server_offer') {
+        const offerData = qrData as WebRTCServerOffer;
+        setScannedOffer(offerData);
+        await connectToServer(offerData);
+      } else {
+        setError("Invalid WebRTC server QR code. Please scan the server QR from admin.");
+      }
+    } catch (err) {
+      console.error('QR parsing failed:', err);
+      setError(err instanceof Error ? err.message : "Failed to parse QR code");
     }
   };
 
