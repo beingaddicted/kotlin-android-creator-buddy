@@ -1,9 +1,9 @@
 
-import { EventEmitter } from 'events';
+import { BrowserEventEmitter } from '../utils/BrowserEventEmitter';
 import { HeartbeatEvent } from './types';
 
-export class HeartbeatManager extends EventEmitter {
-  private heartbeatInterval: NodeJS.Timeout | null = null;
+export class HeartbeatManager extends BrowserEventEmitter {
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private isRunning = false;
 
   constructor(

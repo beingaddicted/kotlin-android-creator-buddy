@@ -1,15 +1,15 @@
 
-import { EventEmitter } from 'events';
+import { BrowserEventEmitter } from '../utils/BrowserEventEmitter';
 import { CandidateManager } from './CandidateManager';
 import { ElectionLogic } from './ElectionLogic';
 import { HeartbeatManager } from './HeartbeatManager';
 import { AdminCandidate, AdminElectionEvent } from './types';
 
-export class AdminElection extends EventEmitter {
+export class AdminElection extends BrowserEventEmitter {
   private candidateManager: CandidateManager;
   private heartbeatManager: HeartbeatManager;
   private currentAdmin: string | null = null;
-  private electionTimeout: NodeJS.Timeout | null = null;
+  private electionTimeout: ReturnType<typeof setTimeout> | null = null;
   private isElectionInProgress = false;
   private isStarted = false;
 

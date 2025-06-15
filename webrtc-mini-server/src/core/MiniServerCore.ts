@@ -1,10 +1,10 @@
-import { EventEmitter } from 'events';
-import { WebSocket } from 'ws';
+
+import { BrowserEventEmitter } from '../utils/BrowserEventEmitter';
 
 export interface ClientConnection {
   id: string;
   name: string;
-  ws: WebSocket;
+  ws: any; // Browser-compatible WebSocket-like interface
   lastSeen: number;
   capabilities: string[];
   organizationId: string;
@@ -19,9 +19,9 @@ export interface MiniServerConfig {
   clientTimeout: number;
 }
 
-export class MiniServerCore extends EventEmitter {
+export class MiniServerCore extends BrowserEventEmitter {
   private clients = new Map<string, ClientConnection>();
-  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private config: MiniServerConfig;
   private isActive = false;
 
@@ -52,7 +52,7 @@ export class MiniServerCore extends EventEmitter {
     
     // Disconnect all clients
     this.clients.forEach((client) => {
-      if (client.ws.readyState === WebSocket.OPEN) {
+      if (client.ws && client.ws.readyState === 1) { // WebSocket.OPEN equivalent
         client.ws.close();
       }
     });
@@ -63,7 +63,7 @@ export class MiniServerCore extends EventEmitter {
     this.emit('server-stopped');
   }
 
-  addClient(clientId: string, clientName: string, ws: WebSocket, capabilities: string[]): void {
+  addClient(clientId: string, clientName: string, ws: any, capabilities: string[]): void {
     const client: ClientConnection = {
       id: clientId,
       name: clientName,
@@ -76,18 +76,20 @@ export class MiniServerCore extends EventEmitter {
     this.clients.set(clientId, client);
     
     // Set up WebSocket handlers
-    ws.on('message', (data) => {
-      this.handleClientMessage(clientId, Buffer.from(data as ArrayBuffer));
-    });
-    
-    ws.on('close', () => {
-      this.removeClient(clientId);
-    });
-    
-    ws.on('error', (error) => {
-      console.error(`Client ${clientId} WebSocket error:`, error);
-      this.removeClient(clientId);
-    });
+    if (ws.addEventListener) {
+      ws.addEventListener('message', (event: MessageEvent) => {
+        this.handleClientMessage(clientId, event.data);
+      });
+      
+      ws.addEventListener('close', () => {
+        this.removeClient(clientId);
+      });
+      
+      ws.addEventListener('error', (error: Event) => {
+        console.error(`Client ${clientId} WebSocket error:`, error);
+        this.removeClient(clientId);
+      });
+    }
     
     console.log(`Client connected: ${clientId} (${clientName})`);
     this.emit('client-connected', { clientId, clientName, capabilities });
@@ -108,9 +110,9 @@ export class MiniServerCore extends EventEmitter {
     }
   }
 
-  private handleClientMessage(clientId: string, data: Buffer): void {
+  private handleClientMessage(clientId: string, data: any): void {
     try {
-      const message = JSON.parse(data.toString());
+      const message = typeof data === 'string' ? JSON.parse(data) : data;
       const client = this.clients.get(clientId);
       
       if (!client) return;
@@ -145,7 +147,7 @@ export class MiniServerCore extends EventEmitter {
 
   private handleHeartbeat(clientId: string): void {
     const client = this.clients.get(clientId);
-    if (client && client.ws.readyState === WebSocket.OPEN) {
+    if (client && client.ws && client.ws.readyState === 1) { // WebSocket.OPEN equivalent
       client.ws.send(JSON.stringify({
         type: 'heartbeat-ack',
         timestamp: Date.now()
@@ -184,7 +186,7 @@ export class MiniServerCore extends EventEmitter {
     } else {
       // Send to specific client
       const targetClient = this.clients.get(targetId);
-      if (targetClient && targetClient.ws.readyState === WebSocket.OPEN) {
+      if (targetClient && targetClient.ws && targetClient.ws.readyState === 1) {
         targetClient.ws.send(JSON.stringify({
           type: 'peer-message',
           data: {
@@ -198,7 +200,7 @@ export class MiniServerCore extends EventEmitter {
 
   private sendClientList(clientId: string): void {
     const client = this.clients.get(clientId);
-    if (!client || client.ws.readyState !== WebSocket.OPEN) return;
+    if (!client || !client.ws || client.ws.readyState !== 1) return;
     
     const clientList = Array.from(this.clients.values()).map(c => ({
       id: c.id,
@@ -231,7 +233,7 @@ export class MiniServerCore extends EventEmitter {
     const messageStr = JSON.stringify(message);
     
     this.clients.forEach((client, clientId) => {
-      if (!exclude.includes(clientId) && client.ws.readyState === WebSocket.OPEN) {
+      if (!exclude.includes(clientId) && client.ws && client.ws.readyState === 1) {
         client.ws.send(messageStr);
       }
     });
