@@ -4,6 +4,7 @@ import { SecureStorage } from './SecureStorage';
 import { SecureMessaging } from './SecureMessaging';
 import { AccessControl, Role, Permission, AccessToken } from './AccessControl';
 import { WebRTCMessage } from '../webrtc/types';
+import { CryptoUtils } from './CryptoUtils';
 
 export class SecurityManager {
   private deviceAuth: DeviceAuth;
@@ -11,6 +12,7 @@ export class SecurityManager {
   private accessControl: AccessControl;
   private currentAccessToken: AccessToken | null = null;
   private isInitialized = false;
+  private encryptionKey: CryptoKey | null = null;
 
   constructor() {
     this.deviceAuth = new DeviceAuth();
@@ -23,6 +25,9 @@ export class SecurityManager {
     try {
       // Initialize secure storage
       await SecureStorage.initialize();
+      
+      // Generate encryption key for QR codes
+      this.encryptionKey = await CryptoUtils.generateAESKey();
       
       // Initialize device authentication
       await this.deviceAuth.initializeDevice(deviceId, organizationId);
@@ -41,6 +46,60 @@ export class SecurityManager {
       console.log('SecurityManager: Initialized successfully');
     } catch (error) {
       console.error('SecurityManager: Failed to initialize:', error);
+      throw error;
+    }
+  }
+
+  // Encrypt QR code data
+  async encryptQRData(qrData: any): Promise<string> {
+    if (!this.encryptionKey) {
+      throw new Error('SecurityManager: Not initialized');
+    }
+
+    try {
+      const dataString = JSON.stringify(qrData);
+      const { encrypted, iv } = await CryptoUtils.encryptAES(dataString, this.encryptionKey);
+      
+      const encryptedQR = {
+        type: 'secure_qr',
+        data: CryptoUtils.arrayBufferToBase64(encrypted),
+        iv: CryptoUtils.arrayBufferToBase64(iv),
+        timestamp: Date.now(),
+        organizationId: this.currentAccessToken?.organizationId
+      };
+
+      return JSON.stringify(encryptedQR);
+    } catch (error) {
+      console.error('SecurityManager: Failed to encrypt QR data:', error);
+      throw error;
+    }
+  }
+
+  // Decrypt QR code data
+  async decryptQRData(encryptedQRString: string): Promise<any> {
+    if (!this.encryptionKey) {
+      throw new Error('SecurityManager: Not initialized');
+    }
+
+    try {
+      const encryptedQR = JSON.parse(encryptedQRString);
+      
+      if (encryptedQR.type !== 'secure_qr') {
+        throw new Error('Invalid encrypted QR code format');
+      }
+
+      // Verify organization match
+      if (encryptedQR.organizationId !== this.currentAccessToken?.organizationId) {
+        throw new Error('QR code is for a different organization');
+      }
+
+      const encrypted = CryptoUtils.base64ToArrayBuffer(encryptedQR.data);
+      const iv = new Uint8Array(CryptoUtils.base64ToArrayBuffer(encryptedQR.iv));
+      
+      const decryptedString = await CryptoUtils.decryptAES(encrypted, this.encryptionKey, iv);
+      return JSON.parse(decryptedString);
+    } catch (error) {
+      console.error('SecurityManager: Failed to decrypt QR data:', error);
       throw error;
     }
   }
@@ -73,6 +132,72 @@ export class SecurityManager {
       return true;
     } catch (error) {
       console.error('SecurityManager: Failed to authenticate device:', error);
+      return false;
+    }
+  }
+
+  // Validate network access
+  validateNetworkAccess(peerId: string, action: string): boolean {
+    if (!this.isInitialized || !this.currentAccessToken) {
+      return false;
+    }
+
+    // Check if device is authenticated
+    if (!this.deviceAuth.isDeviceTrusted(peerId)) {
+      console.warn('SecurityManager: Untrusted device attempting access:', peerId);
+      return false;
+    }
+
+    // Check permissions based on action
+    switch (action) {
+      case 'join_network':
+        return this.hasPermission('network.join');
+      case 'request_location':
+        return this.hasPermission('location.request');
+      case 'share_location':
+        return this.hasPermission('location.share');
+      case 'admin_action':
+        return this.hasPermission('admin.manage');
+      default:
+        return true;
+    }
+  }
+
+  // Generate secure network token
+  generateNetworkToken(): string {
+    if (!this.currentAccessToken) {
+      throw new Error('No access token available');
+    }
+
+    const token = {
+      deviceId: this.currentAccessToken.deviceId,
+      organizationId: this.currentAccessToken.organizationId,
+      role: this.currentAccessToken.role,
+      timestamp: Date.now(),
+      nonce: CryptoUtils.generateChallenge()
+    };
+
+    return btoa(JSON.stringify(token));
+  }
+
+  // Validate network token
+  validateNetworkToken(tokenString: string): boolean {
+    try {
+      const token = JSON.parse(atob(tokenString));
+      
+      // Check timestamp (token valid for 1 hour)
+      if (Date.now() - token.timestamp > 3600000) {
+        return false;
+      }
+
+      // Check organization match
+      if (token.organizationId !== this.currentAccessToken?.organizationId) {
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('SecurityManager: Invalid network token:', error);
       return false;
     }
   }
@@ -255,6 +380,7 @@ export class SecurityManager {
     this.secureMessaging.clearSessionKeys();
     this.deviceAuth.clearCredentials();
     this.currentAccessToken = null;
+    this.encryptionKey = null;
     this.isInitialized = false;
   }
 }

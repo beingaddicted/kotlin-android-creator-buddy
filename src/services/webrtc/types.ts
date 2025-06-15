@@ -37,4 +37,5 @@ export interface WebRTCServerOffer {
   // Security fields
   requiresAuth?: boolean;
   adminCertificate?: string;
+  networkToken?: string;
 }

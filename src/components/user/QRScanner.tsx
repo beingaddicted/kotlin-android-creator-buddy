@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { QrCode, Camera, X } from "lucide-react";
+import { QrCode, Camera, X, Shield } from "lucide-react";
 import QrScanner from "qr-scanner";
 import { qrService, QRData } from "@/services/QRService";
 
@@ -70,30 +70,44 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
     setIsScanning(false);
   };
 
-  const handleQRResult = (qrString: string) => {
-    const qrData = qrService.parseQRData(qrString);
-    
-    if (qrData && 'type' in qrData && qrData.type === 'organization_invite') {
-      const organizationData = qrData as QRData;
-      stopScanning();
-      onQRScanned(organizationData);
-    } else {
-      setError("Invalid QR code. Please scan a valid organization QR code.");
+  const handleQRResult = async (qrString: string) => {
+    try {
+      const qrData = await qrService.parseQRData(qrString);
+      
+      if (qrData && 'type' in qrData && qrData.type === 'organization_invite') {
+        const organizationData = qrData as QRData;
+        
+        // Additional security validation
+        if (window.securityManager) {
+          const hasAccess = window.securityManager.validateNetworkAccess('scanner', 'join_network');
+          if (!hasAccess) {
+            setError("Insufficient permissions to join this network");
+            return;
+          }
+        }
+        
+        stopScanning();
+        onQRScanned(organizationData);
+      } else {
+        setError("Invalid QR code. Please scan a valid organization QR code.");
+      }
+    } catch (err) {
+      console.error('QR parsing failed:', err);
+      setError(err instanceof Error ? err.message : "Failed to read QR code. Please try again.");
     }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    QrScanner.scanImage(file, { returnDetailedScanResult: true })
-      .then(result => {
-        handleQRResult(result.data);
-      })
-      .catch(error => {
-        console.error('QR scan from file failed:', error);
-        setError("Failed to scan QR code from image");
-      });
+    try {
+      const result = await QrScanner.scanImage(file, { returnDetailedScanResult: true });
+      await handleQRResult(result.data);
+    } catch (error) {
+      console.error('QR scan from file failed:', error);
+      setError("Failed to scan QR code from image");
+    }
   };
 
   return (
@@ -101,7 +115,8 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center">
           <QrCode className="w-5 h-5 mr-2" />
-          Scan QR Code
+          Scan Secure QR Code
+          <Shield className="w-4 h-4 ml-2 text-green-600" />
         </CardTitle>
         <Button variant="ghost" size="sm" onClick={onClose}>
           <X className="w-4 h-4" />
@@ -113,7 +128,7 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
             <div className="w-full h-64 bg-gray-100 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center">
               <div className="text-center">
                 <Camera className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-500 mb-4">Position QR code within the camera view</p>
+                <p className="text-gray-500 mb-4">Position encrypted QR code within the camera view</p>
                 <Button onClick={startScanning}>
                   <Camera className="w-4 h-4 mr-2" />
                   Start Camera
@@ -133,6 +148,13 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
               <Button variant="outline" className="cursor-pointer" onClick={() => document.getElementById('qr-upload')?.click()}>
                 Upload QR Image
               </Button>
+            </div>
+
+            <div className="bg-blue-50 p-3 rounded-lg">
+              <div className="flex items-center text-blue-800">
+                <Shield className="w-4 h-4 mr-2" />
+                <span className="text-sm">This scanner only accepts encrypted QR codes from authorized admins</span>
+              </div>
             </div>
           </div>
         ) : (
@@ -158,7 +180,7 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
             </div>
 
             <p className="text-sm text-center text-gray-500">
-              Point your camera at the QR code to scan
+              Point your camera at the encrypted QR code to scan
             </p>
           </div>
         )}
