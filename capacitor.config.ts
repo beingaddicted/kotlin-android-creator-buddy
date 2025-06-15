@@ -16,6 +16,11 @@ const config: CapacitorConfig = {
       sound: 'beep.wav',
     },
   },
+  android: {
+    allowMixedContent: true,
+    captureInput: true,
+    webContentsDebuggingEnabled: true
+  }
 };
 
 export default config;
