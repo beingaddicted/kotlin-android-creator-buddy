@@ -3,36 +3,54 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { QrCode, MapPin, Clock, ArrowLeft } from "lucide-react";
-import { WebRTCQRScanner } from "./user/WebRTCQRScanner";
+import { QRScannerComponent } from "./user/QRScanner";
+import { UserRegistration } from "./user/UserRegistration";
 import { PendingRequestsManager } from "./user/PendingRequestsManager";
+import { QRData } from "@/services/QRService";
 
 interface UserInterfaceProps {
   onBack: () => void;
 }
 
-type UserMode = 'menu' | 'scanner' | 'tracking' | 'pending';
+type UserMode = 'menu' | 'scanner' | 'registration' | 'tracking' | 'pending';
 
 export const UserInterface = ({ onBack }: UserInterfaceProps) => {
   const [mode, setMode] = useState<UserMode>('menu');
+  const [scannedQRData, setScannedQRData] = useState<QRData | null>(null);
 
-  const handleConnectionEstablished = (offerData: any) => {
-    console.log('Connection established:', offerData);
-    // Could show success message or navigate to another view
+  const handleQRScanned = (qrData: QRData) => {
+    console.log('QR Data scanned:', qrData);
+    setScannedQRData(qrData);
+    setMode('registration');
+  };
+
+  const handleRegistrationComplete = () => {
+    setMode('menu');
+    setScannedQRData(null);
   };
 
   const handleScannerClose = () => {
     setMode('menu');
+    setScannedQRData(null);
   };
 
   const renderContent = () => {
     switch (mode) {
       case 'scanner':
         return (
-          <WebRTCQRScanner 
-            onConnectionEstablished={handleConnectionEstablished}
+          <QRScannerComponent 
+            onQRScanned={handleQRScanned}
             onClose={handleScannerClose}
           />
         );
+      case 'registration':
+        return scannedQRData ? (
+          <UserRegistration 
+            qrData={scannedQRData}
+            onComplete={handleRegistrationComplete}
+            onCancel={handleScannerClose}
+          />
+        ) : null;
       case 'pending':
         return <PendingRequestsManager onBack={() => setMode('menu')} />;
       case 'tracking':

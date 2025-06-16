@@ -72,24 +72,48 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
 
   const handleQRResult = async (qrString: string) => {
     try {
+      console.log('Processing QR string:', qrString);
+      
+      // First try to parse as JSON
+      let parsedData;
+      try {
+        parsedData = JSON.parse(qrString);
+      } catch (parseError) {
+        console.error('QR data is not valid JSON:', parseError);
+        setError("QR code does not contain valid data. Please scan an organization invite QR code.");
+        return;
+      }
+
+      console.log('Parsed QR data:', parsedData);
+
+      // Check if it's an organization invite
+      if (!parsedData.type || parsedData.type !== 'organization_invite') {
+        console.error('QR code type mismatch. Expected: organization_invite, Got:', parsedData.type);
+        setError("This QR code is not an organization invite. Please scan a valid organization QR code.");
+        return;
+      }
+
+      // Validate required fields
+      const requiredFields = ['organizationId', 'organizationName', 'adminId', 'inviteCode'];
+      const missingFields = requiredFields.filter(field => !parsedData[field]);
+      
+      if (missingFields.length > 0) {
+        console.error('QR code missing required fields:', missingFields);
+        setError(`QR code is missing required information: ${missingFields.join(', ')}`);
+        return;
+      }
+
+      console.log('QR code validation successful');
+      
+      // Use the qrService to validate and process
       const qrData = await qrService.parseQRData(qrString);
       
-      if (qrData && 'type' in qrData && qrData.type === 'organization_invite') {
-        const organizationData = qrData as QRData;
-        
-        // Additional security validation
-        if (window.securityManager) {
-          const hasAccess = window.securityManager.validateNetworkAccess('scanner', 'join_network');
-          if (!hasAccess) {
-            setError("Insufficient permissions to join this network");
-            return;
-          }
-        }
-        
+      if (qrData && qrService.validateQRData(qrData)) {
+        console.log('QR data validated successfully:', qrData);
         stopScanning();
-        onQRScanned(organizationData);
+        onQRScanned(qrData);
       } else {
-        setError("Invalid QR code. Please scan a valid organization QR code.");
+        setError("QR code validation failed. Please try scanning again.");
       }
     } catch (err) {
       console.error('QR parsing failed:', err);
@@ -115,7 +139,7 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center">
           <QrCode className="w-5 h-5 mr-2" />
-          Scan Secure QR Code
+          Scan Organization QR Code
           <Shield className="w-4 h-4 ml-2 text-green-600" />
         </CardTitle>
         <Button variant="ghost" size="sm" onClick={onClose}>
@@ -128,7 +152,7 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
             <div className="w-full h-64 bg-gray-100 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center">
               <div className="text-center">
                 <Camera className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-500 mb-4">Position encrypted QR code within the camera view</p>
+                <p className="text-gray-500 mb-4">Position organization QR code within the camera view</p>
                 <Button onClick={startScanning}>
                   <Camera className="w-4 h-4 mr-2" />
                   Start Camera
@@ -153,7 +177,7 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
             <div className="bg-blue-50 p-3 rounded-lg">
               <div className="flex items-center text-blue-800">
                 <Shield className="w-4 h-4 mr-2" />
-                <span className="text-sm">This scanner only accepts encrypted QR codes from authorized admins</span>
+                <span className="text-sm">Scan organization invite QR codes from authorized admins</span>
               </div>
             </div>
           </div>
@@ -180,14 +204,23 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
             </div>
 
             <p className="text-sm text-center text-gray-500">
-              Point your camera at the encrypted QR code to scan
+              Point your camera at the organization QR code to scan
             </p>
           </div>
         )}
 
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+            <p className="text-sm text-red-600 font-medium">Scan Error</p>
             <p className="text-sm text-red-600">{error}</p>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="mt-2" 
+              onClick={() => setError("")}
+            >
+              Try Again
+            </Button>
           </div>
         )}
       </CardContent>
