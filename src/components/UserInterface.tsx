@@ -34,6 +34,11 @@ export const UserInterface = ({ onBack }: UserInterfaceProps) => {
     setScannedQRData(null);
   };
 
+  const handleJoinRequest = (registrationData: any, qrData: QRData) => {
+    console.log('Join request made:', registrationData, qrData);
+    // Handle the join request logic here
+  };
+
   const renderContent = () => {
     switch (mode) {
       case 'scanner':
@@ -47,8 +52,8 @@ export const UserInterface = ({ onBack }: UserInterfaceProps) => {
         return scannedQRData ? (
           <UserRegistration 
             qrData={scannedQRData}
-            onComplete={handleRegistrationComplete}
-            onCancel={handleScannerClose}
+            onJoinRequest={handleJoinRequest}
+            onBack={handleScannerClose}
           />
         ) : null;
       case 'pending':
