@@ -36,10 +36,13 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
 
   // Load organizations and join requests on mount
   useEffect(() => {
+    console.log('AdminDashboard: Loading stored data...');
+    
     const storedOrgs = localStorage.getItem('adminOrganizations');
     if (storedOrgs) {
       try {
         const parsedOrgs = JSON.parse(storedOrgs);
+        console.log('AdminDashboard: Loaded organizations:', parsedOrgs);
         setOrganizations(parsedOrgs);
       } catch (error) {
         console.warn('Failed to parse stored organizations:', error);
@@ -50,25 +53,73 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
     if (storedRequests) {
       try {
         const parsedRequests = JSON.parse(storedRequests);
+        console.log('AdminDashboard: Loaded join requests:', parsedRequests);
         setJoinRequests(parsedRequests);
       } catch (error) {
         console.warn('Failed to parse stored join requests:', error);
+      }
+    }
+
+    // Also check for pending user requests
+    const userRequests = localStorage.getItem('pendingJoinRequests');
+    if (userRequests) {
+      try {
+        const parsedUserRequests = JSON.parse(userRequests);
+        console.log('AdminDashboard: Found user pending requests:', parsedUserRequests);
+        
+        // Convert user requests to admin join requests format
+        const convertedRequests = parsedUserRequests.map((req: any) => ({
+          peerId: req.userId,
+          userData: {
+            name: req.userData.name,
+            age: req.userData.age,
+            phone: req.userData.phone,
+            email: req.userData.email,
+          },
+          qrData: {
+            organizationId: req.organizationId,
+            organizationName: req.organizationName,
+            inviteCode: req.inviteCode,
+            adminId: req.adminId
+          }
+        }));
+        
+        setJoinRequests(prev => {
+          const combined = [...prev, ...convertedRequests];
+          // Remove duplicates based on invite code
+          const unique = combined.filter((req, index, self) => 
+            index === self.findIndex(r => r.qrData.inviteCode === req.qrData.inviteCode)
+          );
+          console.log('AdminDashboard: Combined unique requests:', unique);
+          return unique;
+        });
+      } catch (error) {
+        console.warn('Failed to parse user pending requests:', error);
       }
     }
   }, []);
 
   // Save join requests whenever they change
   useEffect(() => {
-    localStorage.setItem('adminJoinRequests', JSON.stringify(joinRequests));
+    if (joinRequests.length > 0) {
+      console.log('AdminDashboard: Saving join requests:', joinRequests);
+      localStorage.setItem('adminJoinRequests', JSON.stringify(joinRequests));
+    }
   }, [joinRequests]);
 
   // Handle new join requests
   const handleNewJoinRequest = (request: JoinRequest) => {
+    console.log('AdminDashboard: Handling new join request:', request);
     setJoinRequests(prev => {
       // Avoid duplicates
       const exists = prev.some(req => req.qrData.inviteCode === request.qrData.inviteCode);
-      if (exists) return prev;
-      return [...prev, request];
+      if (exists) {
+        console.log('AdminDashboard: Request already exists, skipping');
+        return prev;
+      }
+      const updated = [...prev, request];
+      console.log('AdminDashboard: Updated join requests:', updated);
+      return updated;
     });
   };
 
@@ -94,8 +145,17 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
     const updatedInvites = pendingInvites.filter((i: any) => i.inviteCode !== request.qrData.inviteCode);
     localStorage.setItem('pendingInvites', JSON.stringify(updatedInvites));
 
+    // Remove from user's pending requests as well
+    const userRequests = JSON.parse(localStorage.getItem('pendingJoinRequests') || '[]');
+    const updatedUserRequests = userRequests.filter((req: any) => req.inviteCode !== request.qrData.inviteCode);
+    localStorage.setItem('pendingJoinRequests', JSON.stringify(updatedUserRequests));
+
     // Remove request from UI
-    setJoinRequests(prev => prev.filter(r => r.qrData.inviteCode !== request.qrData.inviteCode));
+    setJoinRequests(prev => {
+      const updated = prev.filter(r => r.qrData.inviteCode !== request.qrData.inviteCode);
+      console.log('AdminDashboard: Removed request, updated list:', updated);
+      return updated;
+    });
     
     if (approved) {
       toast.success(`${request.userData.name} has been approved to join ${request.qrData.organizationName}.`);
@@ -105,6 +165,7 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
   };
 
   const handleOrganizationsChange = (newOrganizations: Organization[]) => {
+    console.log('AdminDashboard: Organizations changed:', newOrganizations);
     setOrganizations(newOrganizations);
   };
 
@@ -128,6 +189,8 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
         );
     }
   };
+
+  console.log('AdminDashboard: Current join requests count:', joinRequests.length);
 
   return (
     <div className="min-h-screen bg-gray-50">

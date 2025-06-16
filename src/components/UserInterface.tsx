@@ -15,10 +15,24 @@ type UserMode = 'menu' | 'scanner' | 'tracking' | 'pending';
 export const UserInterface = ({ onBack }: UserInterfaceProps) => {
   const [mode, setMode] = useState<UserMode>('menu');
 
+  const handleConnectionEstablished = (offerData: any) => {
+    console.log('Connection established:', offerData);
+    // Could show success message or navigate to another view
+  };
+
+  const handleScannerClose = () => {
+    setMode('menu');
+  };
+
   const renderContent = () => {
     switch (mode) {
       case 'scanner':
-        return <WebRTCQRScanner />;
+        return (
+          <WebRTCQRScanner 
+            onConnectionEstablished={handleConnectionEstablished}
+            onClose={handleScannerClose}
+          />
+        );
       case 'pending':
         return <PendingRequestsManager onBack={() => setMode('menu')} />;
       case 'tracking':

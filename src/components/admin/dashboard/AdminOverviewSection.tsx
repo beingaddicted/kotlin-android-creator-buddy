@@ -27,6 +27,9 @@ export const AdminOverviewSection = ({
   const monthlyCost = ((totalMembers * 10) / 100).toFixed(2);
 
   useEffect(() => {
+    console.log('AdminOverviewSection: Join requests received:', joinRequests);
+    console.log('AdminOverviewSection: Join requests count:', joinRequests.length);
+
     const handleCancelJoinRequest = (event: CustomEvent) => {
       const { userId, organizationId, inviteCode } = event.detail;
       
@@ -69,6 +72,21 @@ export const AdminOverviewSection = ({
 
   return (
     <div className="space-y-6">
+      {/* Debug information - remove in production */}
+      <Card className="border-yellow-500 bg-yellow-50">
+        <CardHeader>
+          <CardTitle className="text-sm text-yellow-800">Debug Info</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-yellow-700">
+            Join Requests Count: {joinRequests.length}
+          </p>
+          <p className="text-xs text-yellow-600 mt-1">
+            {joinRequests.length === 0 ? 'No pending requests found' : `Found ${joinRequests.length} requests`}
+          </p>
+        </CardContent>
+      </Card>
+
       <JoinRequests joinRequests={joinRequests} onApproval={onApproval} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
