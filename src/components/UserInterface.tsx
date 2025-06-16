@@ -18,7 +18,7 @@ export const UserInterface = ({ onBack }: UserInterfaceProps) => {
   const renderContent = () => {
     switch (mode) {
       case 'scanner':
-        return <WebRTCQRScanner onBack={() => setMode('menu')} />;
+        return <WebRTCQRScanner />;
       case 'pending':
         return <PendingRequestsManager onBack={() => setMode('menu')} />;
       case 'tracking':

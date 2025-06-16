@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { OrganizationManager } from "./admin/OrganizationManager";
 import { QRGenerator } from "./admin/QRGenerator";
 import { MemberTracker } from "./admin/MemberTracker";
@@ -18,14 +18,49 @@ interface AdminDashboardProps {
 
 type ActiveSection = 'overview' | 'organizations' | 'qr' | 'tracking' | 'billing';
 
+interface Organization {
+  id: string;
+  name: string;
+  memberCount: number;
+  active: number;
+}
+
 export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
   const [activeSection, setActiveSection] = useState<ActiveSection>('overview');
-  const [organizations] = useState([
+  const [organizations, setOrganizations] = useState<Organization[]>([
     { id: '1', name: 'Sales Team', memberCount: 12, active: 8 },
     { id: '2', name: 'Field Operations', memberCount: 25, active: 20 },
     { id: '3', name: 'Delivery Crew', memberCount: 8, active: 6 }
   ]);
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
+
+  // Load organizations and join requests on mount
+  useEffect(() => {
+    const storedOrgs = localStorage.getItem('adminOrganizations');
+    if (storedOrgs) {
+      try {
+        const parsedOrgs = JSON.parse(storedOrgs);
+        setOrganizations(parsedOrgs);
+      } catch (error) {
+        console.warn('Failed to parse stored organizations:', error);
+      }
+    }
+
+    const storedRequests = localStorage.getItem('adminJoinRequests');
+    if (storedRequests) {
+      try {
+        const parsedRequests = JSON.parse(storedRequests);
+        setJoinRequests(parsedRequests);
+      } catch (error) {
+        console.warn('Failed to parse stored join requests:', error);
+      }
+    }
+  }, []);
+
+  // Save join requests whenever they change
+  useEffect(() => {
+    localStorage.setItem('adminJoinRequests', JSON.stringify(joinRequests));
+  }, [joinRequests]);
 
   // Handle new join requests
   const handleNewJoinRequest = (request: JoinRequest) => {
@@ -69,10 +104,14 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
     }
   };
 
+  const handleOrganizationsChange = (newOrganizations: Organization[]) => {
+    setOrganizations(newOrganizations);
+  };
+
   const renderContent = () => {
     switch (activeSection) {
       case 'organizations':
-        return <OrganizationManager organizations={organizations} />;
+        return <OrganizationManager organizations={organizations} onOrganizationsChange={handleOrganizationsChange} />;
       case 'qr':
         return <QRGenerator organizations={organizations} />;
       case 'tracking':

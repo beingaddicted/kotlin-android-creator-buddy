@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,12 +15,33 @@ interface Organization {
 
 interface OrganizationManagerProps {
   organizations: Organization[];
+  onOrganizationsChange: (organizations: Organization[]) => void;
 }
 
-export const OrganizationManager = ({ organizations: initialOrgs }: OrganizationManagerProps) => {
+export const OrganizationManager = ({ organizations: initialOrgs, onOrganizationsChange }: OrganizationManagerProps) => {
   const [organizations, setOrganizations] = useState(initialOrgs);
   const [newOrgName, setNewOrgName] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
+
+  // Load organizations from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem('adminOrganizations');
+    if (stored) {
+      try {
+        const parsedOrgs = JSON.parse(stored);
+        setOrganizations(parsedOrgs);
+        onOrganizationsChange(parsedOrgs);
+      } catch (error) {
+        console.warn('Failed to parse stored organizations:', error);
+      }
+    }
+  }, [onOrganizationsChange]);
+
+  // Save organizations to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('adminOrganizations', JSON.stringify(organizations));
+    onOrganizationsChange(organizations);
+  }, [organizations, onOrganizationsChange]);
 
   const addOrganization = () => {
     if (newOrgName.trim()) {
