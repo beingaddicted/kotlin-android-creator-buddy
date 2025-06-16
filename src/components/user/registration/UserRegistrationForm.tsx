@@ -1,7 +1,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { X } from "lucide-react";
+import { X, Clock } from "lucide-react";
 
 interface UserData {
   name: string;
@@ -31,9 +31,13 @@ export const UserRegistrationForm = ({
     return (
       <div className="space-y-4">
         <div className="bg-blue-50 p-4 rounded-lg text-center">
+          <Clock className="w-8 h-8 text-blue-600 mx-auto mb-2" />
           <p className="text-blue-900 font-medium">Request Sent!</p>
           <p className="text-blue-700 text-sm mt-1">
             Your join request has been sent to the admin. Please wait for approval.
+          </p>
+          <p className="text-blue-600 text-xs mt-2">
+            You can join multiple organizations. Manage all your requests from the Pending Requests section.
           </p>
         </div>
         
@@ -44,7 +48,7 @@ export const UserRegistrationForm = ({
           onClick={onCancel}
         >
           <X className="w-4 h-4 mr-2" />
-          Cancel Request
+          Cancel This Request
         </Button>
       </div>
     );
@@ -52,6 +56,12 @@ export const UserRegistrationForm = ({
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
+      <div className="bg-blue-50 p-3 rounded-lg">
+        <p className="text-sm text-blue-800">
+          <strong>Note:</strong> You can join multiple organizations. Your basic information will be saved for future requests.
+        </p>
+      </div>
+
       <div>
         <label className="text-sm font-medium text-gray-700 mb-1 block">
           Full Name *

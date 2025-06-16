@@ -28,26 +28,44 @@ export const AdminOverviewSection = ({
 
   useEffect(() => {
     const handleCancelJoinRequest = (event: CustomEvent) => {
-      const { userId, organizationId } = event.detail;
+      const { userId, organizationId, inviteCode } = event.detail;
       
-      console.log('Admin received join request cancellation:', { userId, organizationId });
+      console.log('Admin received join request cancellation:', { userId, organizationId, inviteCode });
       
-      // Find and remove the cancelled request from the join requests
-      // This would typically be handled by the parent component that manages joinRequests state
-      // For now, we'll just log it and dispatch an event for the parent to handle
+      // Dispatch an event for the parent component to handle removal from joinRequests
       const cancelEvent = new CustomEvent('admin-handle-cancel-request', {
-        detail: { userId, organizationId }
+        detail: { userId, organizationId, inviteCode }
       });
       window.dispatchEvent(cancelEvent);
     };
 
+    const handleAdminCancelRequest = (event: CustomEvent) => {
+      const { userId, organizationId, inviteCode } = event.detail;
+      
+      console.log('Admin handling cancel request:', { userId, organizationId, inviteCode });
+      
+      // Find and remove the cancelled request by invite code
+      const requestToRemove = joinRequests.find(req => 
+        req.qrData.inviteCode === inviteCode || 
+        (req.qrData.organizationId === organizationId && req.peerId === userId)
+      );
+      
+      if (requestToRemove) {
+        // Call onApproval with a special "cancelled" status to remove it
+        onApproval(requestToRemove, false);
+        console.log('Removed cancelled join request from admin dashboard');
+      }
+    };
+
     // Listen for join request cancellations
     window.addEventListener('webrtc-cancel-join-request', handleCancelJoinRequest as EventListener);
+    window.addEventListener('admin-handle-cancel-request', handleAdminCancelRequest as EventListener);
 
     return () => {
       window.removeEventListener('webrtc-cancel-join-request', handleCancelJoinRequest as EventListener);
+      window.removeEventListener('admin-handle-cancel-request', handleAdminCancelRequest as EventListener);
     };
-  }, []);
+  }, [joinRequests, onApproval]);
 
   return (
     <div className="space-y-6">
