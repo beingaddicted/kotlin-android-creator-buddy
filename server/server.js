@@ -1,8 +1,7 @@
-
-const WebSocket = require('ws');
-const express = require('express');
-const http = require('http');
-const os = require('os');
+const WebSocket = require("ws");
+const express = require("express");
+const http = require("http");
+const os = require("os");
 
 const app = express();
 const server = http.createServer(app);
@@ -10,6 +9,8 @@ const wss = new WebSocket.Server({ server });
 
 // Store connected clients
 const clients = new Map();
+// Map peerId (from app/QR) to clientId
+const peerIdToClientId = new Map();
 
 // Get local IP address
 function getLocalIP() {
@@ -18,79 +19,91 @@ function getLocalIP() {
     const iface = interfaces[devName];
     for (let i = 0; i < iface.length; i++) {
       const alias = iface[i];
-      if (alias.family === 'IPv4' && alias.address !== '127.0.0.1' && !alias.internal) {
+      if (
+        alias.family === "IPv4" &&
+        alias.address !== "127.0.0.1" &&
+        !alias.internal
+      ) {
         return alias.address;
       }
     }
   }
-  return 'localhost';
+  return "localhost";
 }
 
 // CORS middleware
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept"
+  );
   next();
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
     clients: clients.size,
-    uptime: process.uptime()
+    uptime: process.uptime(),
   });
 });
 
 // WebSocket connection handling
-wss.on('connection', (ws, req) => {
+wss.on("connection", (ws, req) => {
   const clientId = generateClientId();
   const clientInfo = {
     id: clientId,
     socket: ws,
     connectedAt: new Date(),
-    lastPing: new Date()
+    lastPing: new Date(),
+    peerId: null, // Will be set on registration
   };
-  
   clients.set(clientId, clientInfo);
-  
   console.log(`Client connected: ${clientId} (Total: ${clients.size})`);
-  
-  // Send welcome message
-  ws.send(JSON.stringify({
-    type: 'welcome',
-    clientId: clientId,
-    serverTime: new Date().toISOString()
-  }));
-  
+  ws.send(
+    JSON.stringify({
+      type: "welcome",
+      clientId: clientId,
+      serverTime: new Date().toISOString(),
+    })
+  );
+
   // Handle incoming messages
-  ws.on('message', (data) => {
+  ws.on("message", (data) => {
     try {
       const message = JSON.parse(data.toString());
       handleClientMessage(clientId, message);
     } catch (error) {
-      console.error('Invalid message from client:', clientId, error);
+      console.error("Invalid message from client:", clientId, error);
     }
   });
-  
+
   // Handle client disconnect
-  ws.on('close', () => {
+  ws.on("close", () => {
+    // Remove peerId mapping if registered
+    if (
+      clientInfo.peerId &&
+      peerIdToClientId.get(clientInfo.peerId) === clientId
+    ) {
+      peerIdToClientId.delete(clientInfo.peerId);
+      console.log(`[SIGNAL] peerId unregistered: ${clientInfo.peerId}`);
+    }
     clients.delete(clientId);
     console.log(`Client disconnected: ${clientId} (Total: ${clients.size})`);
-    
-    // Notify other clients
     broadcastToOthers(clientId, {
-      type: 'client_disconnected',
-      clientId: clientId
+      type: "client_disconnected",
+      clientId: clientId,
     });
   });
-  
+
   // Handle errors
-  ws.on('error', (error) => {
+  ws.on("error", (error) => {
     console.error(`Client error ${clientId}:`, error);
   });
-  
+
   // Setup ping/pong for connection health
   const pingInterval = setInterval(() => {
     if (ws.readyState === WebSocket.OPEN) {
@@ -106,22 +119,51 @@ wss.on('connection', (ws, req) => {
 function handleClientMessage(clientId, message) {
   const client = clients.get(clientId);
   if (!client) return;
-  
+
+  // Registration
+  if (message.type === "register" && message.peerId) {
+    client.peerId = message.peerId;
+    peerIdToClientId.set(message.peerId, clientId);
+    console.log(
+      `[SIGNAL] Registered peerId: ${message.peerId} -> clientId: ${clientId}`
+    );
+    client.socket.send(
+      JSON.stringify({ type: "register_ack", peerId: message.peerId })
+    );
+    return;
+  }
+  // Routing by toPeerId
+  if (message.toPeerId && peerIdToClientId.has(message.toPeerId)) {
+    const targetClientId = peerIdToClientId.get(message.toPeerId);
+    const targetClient = clients.get(targetClientId);
+    if (targetClient && targetClient.socket.readyState === WebSocket.OPEN) {
+      targetClient.socket.send(
+        JSON.stringify({ ...message, fromPeerId: client.peerId })
+      );
+      console.log(
+        `[SIGNAL] Routed message type '${message.type}' from ${client.peerId} to ${message.toPeerId}`
+      );
+      return;
+    }
+  }
+
   console.log(`Message from ${clientId}:`, message.type);
-  
+
   switch (message.type) {
-    case 'webrtc_signaling':
+    case "webrtc_signaling":
       handleWebRTCSignaling(clientId, message);
       break;
-    case 'location_update':
+    case "location_update":
       handleLocationUpdate(clientId, message);
       break;
-    case 'broadcast':
+    case "broadcast":
       handleBroadcast(clientId, message);
       break;
-    case 'ping':
+    case "ping":
       // Respond to ping
-      client.socket.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+      client.socket.send(
+        JSON.stringify({ type: "pong", timestamp: Date.now() })
+      );
       break;
     default:
       console.log(`Unknown message type: ${message.type}`);
@@ -131,21 +173,23 @@ function handleClientMessage(clientId, message) {
 // Handle WebRTC signaling
 function handleWebRTCSignaling(senderId, message) {
   const { targetId, signaling } = message;
-  
+
   if (targetId && clients.has(targetId)) {
     // Send to specific client
     const targetClient = clients.get(targetId);
-    targetClient.socket.send(JSON.stringify({
-      type: 'webrtc_signaling',
-      senderId: senderId,
-      signaling: signaling
-    }));
+    targetClient.socket.send(
+      JSON.stringify({
+        type: "webrtc_signaling",
+        senderId: senderId,
+        signaling: signaling,
+      })
+    );
   } else {
     // Broadcast to all other clients
     broadcastToOthers(senderId, {
-      type: 'webrtc_signaling',
+      type: "webrtc_signaling",
       senderId: senderId,
-      signaling: signaling
+      signaling: signaling,
     });
   }
 }
@@ -153,20 +197,20 @@ function handleWebRTCSignaling(senderId, message) {
 // Handle location updates
 function handleLocationUpdate(senderId, message) {
   broadcastToOthers(senderId, {
-    type: 'location_update',
+    type: "location_update",
     senderId: senderId,
     location: message.location,
-    timestamp: message.timestamp || Date.now()
+    timestamp: message.timestamp || Date.now(),
   });
 }
 
 // Handle broadcast messages
 function handleBroadcast(senderId, message) {
   broadcastToOthers(senderId, {
-    type: 'broadcast',
+    type: "broadcast",
     senderId: senderId,
     data: message.data,
-    timestamp: Date.now()
+    timestamp: Date.now(),
   });
 }
 
@@ -185,7 +229,7 @@ function broadcastToOthers(senderId, message) {
 
 // Generate unique client ID
 function generateClientId() {
-  return 'client_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  return "client_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
 }
 
 // Start server
@@ -193,18 +237,18 @@ const PORT = process.env.PORT || 3001;
 const LOCAL_IP = getLocalIP();
 
 server.listen(PORT, () => {
-  console.log('🚀 LocationSync WebSocket Server Started');
+  console.log("🚀 LocationSync WebSocket Server Started");
   console.log(`📍 Local URL: ws://localhost:${PORT}`);
   console.log(`🌐 Network URL: ws://${LOCAL_IP}:${PORT}`);
   console.log(`📱 Mobile devices can connect to: ws://${LOCAL_IP}:${PORT}`);
-  console.log('✅ Server ready for WebRTC signaling and location sync');
+  console.log("✅ Server ready for WebRTC signaling and location sync");
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('Shutting down server...');
+process.on("SIGTERM", () => {
+  console.log("Shutting down server...");
   server.close(() => {
-    console.log('Server closed');
+    console.log("Server closed");
     process.exit(0);
   });
 });

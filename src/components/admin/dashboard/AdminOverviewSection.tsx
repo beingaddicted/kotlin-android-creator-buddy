@@ -1,8 +1,7 @@
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, Building2, MapPin, CreditCard } from "lucide-react";
 import { JoinRequests, JoinRequest } from "../JoinRequests";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 interface Organization {
   id: string;
@@ -26,27 +25,34 @@ export const AdminOverviewSection = ({
   const totalActive = organizations.reduce((sum, org) => sum + org.active, 0);
   const monthlyCost = ((totalMembers * 10) / 100).toFixed(2);
 
+  // Debug logs: only log when joinRequests array contents actually change
+  const prevJoinRequestsRef = useRef<JoinRequest[] | null>(null);
   useEffect(() => {
-    console.log('AdminOverviewSection: Join requests received:', joinRequests);
-    console.log('AdminOverviewSection: Join requests count:', joinRequests.length);
+    const prev = prevJoinRequestsRef.current;
+    const isSame =
+      prev &&
+      prev.length === joinRequests.length &&
+      prev.every((req, i) => req.qrData.inviteCode === joinRequests[i].qrData.inviteCode);
+    if (!isSame) {
+      console.log('AdminOverviewSection: Join requests received:', joinRequests);
+      console.log('AdminOverviewSection: Join requests count:', joinRequests.length);
+      prevJoinRequestsRef.current = joinRequests;
+    }
+  }, [joinRequests]);
 
+  // Event listeners: only register once on mount
+  useEffect(() => {
     const handleCancelJoinRequest = (event: CustomEvent) => {
       const { userId, organizationId, inviteCode } = event.detail;
-      
       console.log('Admin received join request cancellation:', { userId, organizationId, inviteCode });
-      
-      // Dispatch an event for the parent component to handle removal from joinRequests
       const cancelEvent = new CustomEvent('admin-handle-cancel-request', {
         detail: { userId, organizationId, inviteCode }
       });
       window.dispatchEvent(cancelEvent);
     };
-
     const handleAdminCancelRequest = (event: CustomEvent) => {
       const { userId, organizationId, inviteCode } = event.detail;
-      
       console.log('Admin handling cancel request:', { userId, organizationId, inviteCode });
-      
       // Find and remove the cancelled request by invite code
       const requestToRemove = joinRequests.find(req => 
         req.qrData.inviteCode === inviteCode || 
@@ -59,16 +65,13 @@ export const AdminOverviewSection = ({
         console.log('Removed cancelled join request from admin dashboard');
       }
     };
-
-    // Listen for join request cancellations
     window.addEventListener('webrtc-cancel-join-request', handleCancelJoinRequest as EventListener);
     window.addEventListener('admin-handle-cancel-request', handleAdminCancelRequest as EventListener);
-
     return () => {
       window.removeEventListener('webrtc-cancel-join-request', handleCancelJoinRequest as EventListener);
       window.removeEventListener('admin-handle-cancel-request', handleAdminCancelRequest as EventListener);
     };
-  }, [joinRequests, onApproval]);
+  }, []);
 
   return (
     <div className="space-y-6">

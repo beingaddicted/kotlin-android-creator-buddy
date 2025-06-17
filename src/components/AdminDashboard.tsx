@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { OrganizationManager } from "./admin/OrganizationManager";
 import { QRGenerator } from "./admin/QRGenerator";
@@ -127,8 +126,15 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
   useAdminDashboardEvents({ onJoinRequest: handleNewJoinRequest });
 
   const handleApproval = (request: JoinRequest, approved: boolean) => {
-    console.log('AdminDashboard: Processing approval:', { request, approved });
-    
+    // Only update if the request is present
+    setJoinRequests(prev => {
+      const exists = prev.some(r => r.qrData.inviteCode === request.qrData.inviteCode);
+      if (!exists) return prev;
+      const updated = prev.filter(r => r.qrData.inviteCode !== request.qrData.inviteCode);
+      console.log('AdminDashboard: Removed request, updated list:', updated);
+      return updated;
+    });
+
     // Send response back to user
     const response = {
       type: 'join_response',
@@ -150,13 +156,6 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
     const updatedUserRequests = userRequests.filter((req: any) => req.inviteCode !== request.qrData.inviteCode);
     localStorage.setItem('pendingJoinRequests', JSON.stringify(updatedUserRequests));
 
-    // Remove request from UI
-    setJoinRequests(prev => {
-      const updated = prev.filter(r => r.qrData.inviteCode !== request.qrData.inviteCode);
-      console.log('AdminDashboard: Removed request, updated list:', updated);
-      return updated;
-    });
-    
     if (approved) {
       toast.success(`${request.userData.name} has been approved to join ${request.qrData.organizationName}.`);
     } else {
