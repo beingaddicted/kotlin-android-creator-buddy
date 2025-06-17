@@ -104,7 +104,16 @@ export class SignalingService {
 // WebSocket signaling integration
 let ws: WebSocket | null = null;
 
+function cleanupOldWebSocket() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    ws.close();
+    ws = null;
+    console.log('[SIGNALING] Closed old WebSocket connection to prevent resource leaks.');
+  }
+}
+
 export function connectToSignalingServer(url: string, onMessage: (msg: SignalingMessage) => void, peerId?: string): () => void {
+  cleanupOldWebSocket();
   ws = new WebSocket(url);
   ws.onopen = () => {
     if (peerId) {
@@ -119,6 +128,12 @@ export function connectToSignalingServer(url: string, onMessage: (msg: Signaling
     } catch (e) {
       console.error('Failed to parse signaling message:', e);
     }
+  };
+  ws.onerror = (err) => {
+    console.error('[SIGNALING] WebSocket error:', err);
+  };
+  ws.onclose = () => {
+    console.log('[SIGNALING] WebSocket closed.');
   };
   // Return cleanup function to close ws
   return () => {

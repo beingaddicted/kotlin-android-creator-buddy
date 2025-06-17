@@ -26,17 +26,14 @@ export const AdminOverviewSection = ({
   const monthlyCost = ((totalMembers * 10) / 100).toFixed(2);
 
   // Debug logs: only log when joinRequests array contents actually change
-  const prevJoinRequestsRef = useRef<JoinRequest[] | null>(null);
+  const prevJoinRequestsRef = useRef<string[]>([]);
   useEffect(() => {
     const prev = prevJoinRequestsRef.current;
-    const isSame =
-      prev &&
-      prev.length === joinRequests.length &&
-      prev.every((req, i) => req.qrData.inviteCode === joinRequests[i].qrData.inviteCode);
-    if (!isSame) {
+    const current = joinRequests.map(j => j.qrData.inviteCode).join(",");
+    if (prev.join(",") !== current) {
       console.log('AdminOverviewSection: Join requests received:', joinRequests);
       console.log('AdminOverviewSection: Join requests count:', joinRequests.length);
-      prevJoinRequestsRef.current = joinRequests;
+      prevJoinRequestsRef.current = joinRequests.map(j => j.qrData.inviteCode);
     }
   }, [joinRequests]);
 

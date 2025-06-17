@@ -1,64 +1,58 @@
-
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { getOrganizations, addOrganization, deleteOrganization, Organization as PersistentOrg } from "@/lib/localDb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Users, Settings, Trash2 } from "lucide-react";
 
-interface Organization {
-  id: string;
-  name: string;
-  memberCount: number;
-  active: number;
-}
-
 interface OrganizationManagerProps {
   organizations: Organization[];
   onOrganizationsChange: (organizations: Organization[]) => void;
 }
 
-export const OrganizationManager = ({ organizations: initialOrgs, onOrganizationsChange }: OrganizationManagerProps) => {
-  const [organizations, setOrganizations] = useState(initialOrgs);
+export const OrganizationManager = ({ organizations: _initialOrgs, onOrganizationsChange }: OrganizationManagerProps) => {
+  const [organizations, setOrganizations] = useState<PersistentOrg[]>([]);
   const [newOrgName, setNewOrgName] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
 
-  // Load organizations from localStorage on mount
+  // Load organizations from persistent DB on mount
   useEffect(() => {
-    const stored = localStorage.getItem('adminOrganizations');
-    if (stored) {
-      try {
-        const parsedOrgs = JSON.parse(stored);
-        setOrganizations(parsedOrgs);
-        onOrganizationsChange(parsedOrgs);
-      } catch (error) {
-        console.warn('Failed to parse stored organizations:', error);
-      }
-    }
-  }, [onOrganizationsChange]);
+    getOrganizations().then(setOrganizations);
+  }, []);
 
-  // Save organizations to localStorage whenever they change
-  useEffect(() => {
-    localStorage.setItem('adminOrganizations', JSON.stringify(organizations));
-    onOrganizationsChange(organizations);
-  }, [organizations, onOrganizationsChange]);
-
-  const addOrganization = () => {
+  // Notify parent only when organizations are added or deleted
+  const addOrg = async () => {
     if (newOrgName.trim()) {
-      const newOrg: Organization = {
+      const newOrg: PersistentOrg = {
         id: Date.now().toString(),
         name: newOrgName.trim(),
-        memberCount: 0,
-        active: 0
+        members: []
       };
-      setOrganizations([...organizations, newOrg]);
+      await addOrganization(newOrg);
+      const updated = await getOrganizations();
+      setOrganizations(updated);
+      onOrganizationsChange(updated.map(org => ({
+        id: org.id,
+        name: org.name,
+        memberCount: org.members ? org.members.length : 0,
+        active: 0
+      })));
       setNewOrgName("");
       setShowAddForm(false);
     }
   };
 
-  const deleteOrganization = (id: string) => {
-    setOrganizations(organizations.filter(org => org.id !== id));
+  const deleteOrg = async (id: string) => {
+    await deleteOrganization(id);
+    const updated = await getOrganizations();
+    setOrganizations(updated);
+    onOrganizationsChange(updated.map(org => ({
+      id: org.id,
+      name: org.name,
+      memberCount: org.members ? org.members.length : 0,
+      active: 0
+    })));
   };
 
   return (
@@ -81,10 +75,10 @@ export const OrganizationManager = ({ organizations: initialOrgs, onOrganization
               placeholder="Organization name"
               value={newOrgName}
               onChange={(e) => setNewOrgName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addOrganization()}
+              onKeyDown={(e) => e.key === 'Enter' && addOrg()}
             />
             <div className="flex space-x-2">
-              <Button onClick={addOrganization}>Create</Button>
+              <Button onClick={addOrg}>Create</Button>
               <Button variant="outline" onClick={() => setShowAddForm(false)}>Cancel</Button>
             </div>
           </CardContent>
@@ -103,18 +97,28 @@ export const OrganizationManager = ({ organizations: initialOrgs, onOrganization
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900">{org.name}</h3>
                     <div className="flex items-center space-x-4 mt-1">
-                      <span className="text-sm text-gray-500">{org.memberCount} members</span>
-                      <Badge variant={org.active > 0 ? "default" : "secondary"}>
-                        {org.active} active
+                      <span className="text-sm text-gray-500">{org.members?.length || 0} members</span>
+                      <Badge variant={org.members && org.members.length > 0 ? "default" : "secondary"}>
+                        {org.members?.length || 0} active
                       </Badge>
                     </div>
+                    {/* List members with roles */}
+                    {org.members && org.members.length > 0 && (
+                      <ul className="mt-2 text-xs text-gray-700">
+                        {org.members.map(m => (
+                          <li key={m.id}>
+                            {m.name} (age: {m.age}) - <span className="font-semibold">{m.role}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Button variant="outline" size="sm">
                     <Settings className="w-4 h-4" />
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => deleteOrganization(org.id)}>
+                  <Button variant="outline" size="sm" onClick={() => deleteOrg(org.id)}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
                 </div>

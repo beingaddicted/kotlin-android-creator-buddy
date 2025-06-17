@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { OrganizationManager } from "./admin/OrganizationManager";
 import { QRGenerator } from "./admin/QRGenerator";
 import { MemberTracker } from "./admin/MemberTracker";
@@ -10,6 +10,7 @@ import { AdminDashboardHeader } from "./admin/dashboard/AdminDashboardHeader";
 import { AdminDashboardNavigation } from "./admin/dashboard/AdminDashboardNavigation";
 import { AdminOverviewSection } from "./admin/dashboard/AdminOverviewSection";
 import { useAdminDashboardEvents } from "@/hooks/useAdminDashboardEvents";
+import { getOrganizations, addOrganization, updateOrganization, addMemberToOrganization, Organization as PersistentOrg, Member as PersistentMember } from "@/lib/localDb";
 
 interface AdminDashboardProps {
   onBack: () => void;
@@ -26,28 +27,13 @@ interface Organization {
 
 export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
   const [activeSection, setActiveSection] = useState<ActiveSection>('overview');
-  const [organizations, setOrganizations] = useState<Organization[]>([
-    { id: '1', name: 'Sales Team', memberCount: 12, active: 8 },
-    { id: '2', name: 'Field Operations', memberCount: 25, active: 20 },
-    { id: '3', name: 'Delivery Crew', memberCount: 8, active: 6 }
-  ]);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
 
   // Load organizations and join requests on mount
   useEffect(() => {
     console.log('AdminDashboard: Loading stored data...');
     
-    const storedOrgs = localStorage.getItem('adminOrganizations');
-    if (storedOrgs) {
-      try {
-        const parsedOrgs = JSON.parse(storedOrgs);
-        console.log('AdminDashboard: Loaded organizations:', parsedOrgs);
-        setOrganizations(parsedOrgs);
-      } catch (error) {
-        console.warn('Failed to parse stored organizations:', error);
-      }
-    }
-
     const storedRequests = localStorage.getItem('adminJoinRequests');
     if (storedRequests) {
       try {
@@ -106,32 +92,48 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
     }
   }, [joinRequests]);
 
+  // Remove dummy organizations, load from persistent DB
+  useEffect(() => {
+    getOrganizations().then((orgs) => {
+      setOrganizations(orgs.length ? orgs : []);
+    });
+  }, []);
+
+  // When admin creates a new org, persist it
+  const handleOrganizationsChange = async (newOrganizations: Organization[]) => {
+    setOrganizations(newOrganizations);
+    // Persist all organizations
+    for (const org of newOrganizations) {
+      await addOrganization({ ...org, members: [] });
+    }
+  };
+
   // Handle new join requests
   const handleNewJoinRequest = (request: JoinRequest) => {
     console.log('AdminDashboard: Handling new join request:', request);
     setJoinRequests(prev => {
-      // Avoid duplicates
-      const exists = prev.some(req => req.qrData.inviteCode === request.qrData.inviteCode);
-      if (exists) {
-        console.log('AdminDashboard: Request already exists, skipping');
+      // Defensive: always check for inviteCode presence
+      const alreadyExists = prev.some(req => req.qrData.inviteCode === request.qrData.inviteCode);
+      if (!alreadyExists) {
+        const updated = [...prev, request];
+        console.log('AdminDashboard: Added join request. New list:', updated.map(r => r.qrData.inviteCode));
+        return updated;
+      } else {
+        console.log('AdminDashboard: Join request already exists, skipping:', request.qrData.inviteCode);
         return prev;
       }
-      const updated = [...prev, request];
-      console.log('AdminDashboard: Updated join requests:', updated);
-      return updated;
     });
   };
 
-  // Use the custom hook for event handling
+  // Use the custom hook for event handling (must be unconditional)
   useAdminDashboardEvents({ onJoinRequest: handleNewJoinRequest });
 
-  const handleApproval = (request: JoinRequest, approved: boolean) => {
-    // Only update if the request is present
+  // When admin approves a join, add member to org in persistent DB
+  const handleApproval = async (request: JoinRequest, approved: boolean) => {
     setJoinRequests(prev => {
       const exists = prev.some(r => r.qrData.inviteCode === request.qrData.inviteCode);
       if (!exists) return prev;
       const updated = prev.filter(r => r.qrData.inviteCode !== request.qrData.inviteCode);
-      console.log('AdminDashboard: Removed request, updated list:', updated);
       return updated;
     });
 
@@ -157,16 +159,41 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
     localStorage.setItem('pendingJoinRequests', JSON.stringify(updatedUserRequests));
 
     if (approved) {
+      // Add member to org in persistent DB
+      const member: PersistentMember = {
+        id: request.peerId,
+        name: request.userData.name,
+        age: request.userData.age,
+        role: 'member',
+        connectionInfo: {},
+      };
+      const org = await getOrganizations().then(orgs => orgs.find(o => o.id === request.qrData.organizationId));
+      if (org) {
+        await addMemberToOrganization(org.id, member);
+      }
       toast.success(`${request.userData.name} has been approved to join ${request.qrData.organizationName}.`);
     } else {
       toast.error(`${request.userData.name} has been denied access to ${request.qrData.organizationName}.`);
     }
   };
 
-  const handleOrganizationsChange = (newOrganizations: Organization[]) => {
-    console.log('AdminDashboard: Organizations changed:', newOrganizations);
-    setOrganizations(newOrganizations);
-  };
+  // Load join requests on mount, but filter out any that have already been accepted/denied
+  useEffect(() => {
+    const storedRequests = localStorage.getItem('adminJoinRequests');
+    let requests: JoinRequest[] = [];
+    if (storedRequests) {
+      try {
+        requests = JSON.parse(storedRequests);
+      } catch (error) {
+        console.warn('Failed to parse stored join requests:', error);
+      }
+    }
+    // Remove requests whose inviteCode is not in pendingInvites
+    const pendingInvites = JSON.parse(localStorage.getItem('pendingInvites') || '[]');
+    const pendingInviteCodes = new Set(pendingInvites.map((i: { inviteCode: string }) => i.inviteCode));
+    const filtered = requests.filter(r => pendingInviteCodes.has(r.qrData.inviteCode));
+    setJoinRequests(filtered);
+  }, []);
 
   const renderContent = () => {
     switch (activeSection) {
@@ -189,7 +216,8 @@ export const AdminDashboard = ({ onBack }: AdminDashboardProps) => {
     }
   };
 
-  console.log('AdminDashboard: Current join requests count:', joinRequests.length);
+  // Add debug log to confirm joinRequests at render time
+  console.log('AdminDashboard: Rendering with joinRequests:', joinRequests);
 
   return (
     <div className="min-h-screen bg-gray-50">
