@@ -1,5 +1,4 @@
-
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,9 +26,35 @@ interface PendingRequestsManagerProps {
 
 export const PendingRequestsManager = ({ onBack }: PendingRequestsManagerProps) => {
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+  const [connectedInviteCodes, setConnectedInviteCodes] = useState<string[]>([]);
+  const wsListenerRef = useRef<any>(null);
 
   useEffect(() => {
     loadPendingRequests();
+    // Listen for join_response signaling messages
+    if (!wsListenerRef.current) {
+      wsListenerRef.current = (event: MessageEvent) => {
+        try {
+          const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (msg.type === 'join_response' && msg.status === 'approved') {
+            setConnectedInviteCodes(prev => [...prev, msg.organizationId || msg.inviteCode]);
+            // Optionally remove from pendingRequests
+            setPendingRequests(prev => prev.filter(r => r.inviteCode !== (msg.organizationId || msg.inviteCode)));
+          }
+        } catch {}
+      };
+      if (window && window.WebSocket) {
+        // Listen to all WebSocket messages
+        if (webRTCService.ws) {
+          webRTCService.ws.addEventListener('message', wsListenerRef.current);
+        }
+      }
+    }
+    return () => {
+      if (webRTCService.ws && wsListenerRef.current) {
+        webRTCService.ws.removeEventListener('message', wsListenerRef.current);
+      }
+    };
   }, []);
 
   const loadPendingRequests = () => {
@@ -128,14 +153,21 @@ export const PendingRequestsManager = ({ onBack }: PendingRequestsManagerProps) 
                     </p>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Badge variant="outline" className="text-yellow-700 border-yellow-300">
-                      Pending
-                    </Badge>
+                    {connectedInviteCodes.includes(request.inviteCode) ? (
+                      <Badge variant="success" className="text-green-700 border-green-300">
+                        Connected to admin
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-yellow-700 border-yellow-300">
+                        Pending
+                      </Badge>
+                    )}
                     <Button
                       size="sm"
                       variant="outline"
                       className="text-red-600 hover:bg-red-50 hover:text-red-700 border-red-300"
                       onClick={() => cancelRequest(request.organizationId)}
+                      disabled={connectedInviteCodes.includes(request.inviteCode)}
                     >
                       <X className="w-4 h-4 mr-1" />
                       Cancel

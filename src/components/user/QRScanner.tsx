@@ -11,6 +11,7 @@ import { appConfig } from "@/config/appConfig";
 interface QRScannerProps {
   onQRScanned: (qrData: QRData) => void;
   onClose: () => void;
+  onJoinRequestSubmitted?: () => void;
 }
 
 interface SecureQRData extends QRData {
@@ -20,7 +21,7 @@ interface SecureQRData extends QRData {
   securityLevel?: 'standard' | 'enhanced';
 }
 
-export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => {
+export const QRScannerComponent = ({ onQRScanned, onClose, onJoinRequestSubmitted }: QRScannerProps) => {
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string>("");
   const [showUserForm, setShowUserForm] = useState(false);
@@ -177,6 +178,27 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
     e.preventDefault();
     if (!pendingQRData) return;
     setShowUserForm(false);
+    // Build pending request object
+    const pendingRequest = {
+      userId: localStorage.getItem('clientId') || 'client',
+      organizationId: pendingQRData.organizationId,
+      organizationName: pendingQRData.organizationName,
+      adminId: pendingQRData.adminId,
+      inviteCode: pendingQRData.inviteCode,
+      timestamp: Date.now(),
+      userData: { name: userName, age: userAge }
+    };
+    // Save to localStorage
+    const stored = localStorage.getItem('pendingJoinRequests');
+    let requests = [];
+    if (stored) {
+      try { requests = JSON.parse(stored); } catch {}
+    }
+    // Only add if not already present
+    if (!requests.some((r: any) => r.inviteCode === pendingRequest.inviteCode)) {
+      requests.push(pendingRequest);
+      localStorage.setItem('pendingJoinRequests', JSON.stringify(requests));
+    }
     // Send join request to admin for validation via WebSocket signaling
     sendSignalingViaWebSocket({
       type: 'join_request',
@@ -190,6 +212,10 @@ export const QRScannerComponent = ({ onQRScanned, onClose }: QRScannerProps) => 
     setUserName("");
     setUserAge("");
     setPendingQRData(null);
+    // Notify parent to switch to pending page
+    if (typeof onJoinRequestSubmitted === 'function') {
+      onJoinRequestSubmitted();
+    }
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {

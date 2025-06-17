@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useCallback } from "react";
 import { webRTCService } from "@/services/WebRTCService";
 import { connectToSignalingServer } from "@/services/webrtc/SignalingService";
 import { toast } from "sonner";
@@ -11,9 +11,9 @@ interface UseAdminDashboardEventsProps {
 
 let wsConnectionInitialized = false;
 
-// Stable handler references
-function handleWebRTCMessageFactory(onJoinRequest: (request: JoinRequest) => void) {
-  return function handleWebRTCMessage(event: Event) {
+export const useAdminDashboardEvents = ({ onJoinRequest }: UseAdminDashboardEventsProps) => {
+  // Inline stable handler for WebRTC messages
+  const handleWebRTCMessage = useCallback((event: Event) => {
     console.log('[ADMIN] handleWebRTCMessage triggered:', event);
     const customEvent = event as CustomEvent<{ message: import("@/services/webrtc/SignalingService").SignalingMessage }>;
 
@@ -37,21 +37,16 @@ function handleWebRTCMessageFactory(onJoinRequest: (request: JoinRequest) => voi
       };
       onJoinRequest(newRequest);
     }
-  };
-}
+  }, [onJoinRequest]);
 
-export const useAdminDashboardEvents = ({ onJoinRequest }: UseAdminDashboardEventsProps) => {
-  // Stable handler
-  const handleWebRTCMessage = handleWebRTCMessageFactory(onJoinRequest);
-
-  // Stable location update handler
-  const handleLocationUpdate = (event: CustomEvent<{ message: import("@/services/webrtc/SignalingService").SignalingMessage }>) => {
+  // Inline stable handler for location updates
+  const handleLocationUpdate = useCallback((event: CustomEvent<{ message: import("@/services/webrtc/SignalingService").SignalingMessage }>) => {
     const { message } = event.detail;
     
-  };
+  }, []);
 
-  // Stable join request event handler
-  const handleJoinRequestEvent = (event: CustomEvent<{ message: import("@/services/webrtc/SignalingService").SignalingMessage }>) => {
+  // Inline stable handler for join request events
+  const handleJoinRequestEvent = useCallback((event: CustomEvent<{ message: import("@/services/webrtc/SignalingService").SignalingMessage }>) => {
     const { message } = event.detail;
     if (message.type === 'join_request') {
       const { userData, qrData } = message.data;
@@ -61,7 +56,7 @@ export const useAdminDashboardEvents = ({ onJoinRequest }: UseAdminDashboardEven
         handleWebRTCMessage(new CustomEvent('webrtc-message-received', { detail: { message: { type: 'join_request', data: { userData, qrData }, fromPeerId: peerId } } }));
       }
     }
-  };
+  }, [handleWebRTCMessage]);
 
   useEffect(() => {
     window.addEventListener('webrtc-message-received', handleWebRTCMessage);

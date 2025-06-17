@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,6 +33,10 @@ export const UserInterface = ({ onBack }: UserInterfaceProps) => {
     setScannedQRData(null);
   };
 
+  const handleJoinRequestSubmitted = () => {
+    setMode('pending');
+  };
+
   const handleJoinRequest = (registrationData: any, qrData: QRData) => {
     console.log('Join request made:', registrationData, qrData);
     // Handle the join request logic here
@@ -46,6 +49,7 @@ export const UserInterface = ({ onBack }: UserInterfaceProps) => {
           <QRScannerComponent 
             onQRScanned={handleQRScanned}
             onClose={handleScannerClose}
+            onJoinRequestSubmitted={handleJoinRequestSubmitted}
           />
         );
       case 'registration':
